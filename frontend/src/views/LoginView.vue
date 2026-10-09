@@ -17,8 +17,8 @@ const loading = ref(false);
 const error = ref("");
 
 const demos = [
-  { name: "林清", phone: "13800000001", note: "主演示账户" },
-  { name: "周敏", phone: "13900000002", note: "越权校验演示" },
+  { name: "测试1", phone: "13800000001", note: "主演示账户" },
+  { name: "测试2", phone: "13900000002", note: "越权校验演示" },
 ];
 
 function fillDemo(d) {

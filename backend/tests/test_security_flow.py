@@ -107,12 +107,12 @@ def test_idempotency_key(client, lin):
 
 def test_insufficient_balance_and_same_account(lin):
     assert lin.transfer("99999.00", frm="acc_001")["error"]["code"] == "INSUFFICIENT_BALANCE"
-    r = lin.transfer("10.00", payee_id=None, payee_account_no="6217000010001001", payee_name="林清")
+    r = lin.transfer("10.00", payee_id=None, payee_account_no="6217000010001001", payee_name="测试1")
     assert r["error"]["code"] == "SAME_ACCOUNT"
 
 
 def test_transfer_to_own_account_is_not_new_payee(lin):
-    r = lin.transfer("1000.00", payee_id=None, payee_account_no="6217000010001002", payee_name="林清")
+    r = lin.transfer("1000.00", payee_id=None, payee_account_no="6217000010001002", payee_name="测试1")
     assert r["data"]["status"] == "PREPARED"
     lin.confirm(r["data"]["operation_id"])
     assert lin.balance("acc_002") == "121000.00"

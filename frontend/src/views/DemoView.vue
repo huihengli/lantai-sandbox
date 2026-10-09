@@ -102,7 +102,7 @@ onMounted(() => { loadBl(); });
   </div>
 
   <section class="panel" style="margin-top: var(--space-5)">
-    <div class="panel-title"><h3>一键触发风控规则</h3><span class="hint">将跳转到转账页并预填表单（以林清账号演示）</span></div>
+    <div class="panel-title"><h3>一键触发风控规则</h3><span class="hint">将跳转到转账页并预填表单（以测试1账号演示）</span></div>
     <div class="presets">
       <RouterLink v-for="p in presets" :key="p.key" :to="{ name: 'transfer', query: { preset: p.key } }" class="preset">
         <strong>{{ p.name }}</strong>
