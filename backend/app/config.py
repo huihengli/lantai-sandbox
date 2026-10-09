@@ -15,7 +15,7 @@ def _parse_offset(value: str) -> timedelta:
 
 DATABASE_URL = _env("DATABASE_URL", "sqlite:///./data/lantai.db")
 PUBLIC_BASE_URL = _env("PUBLIC_BASE_URL", "http://localhost:8001")
-# 前端地址：confirm_url 指向它。开发时 Vite 在 5173，设为 http://localhost:5173；默认由后端托管构建产物。
+# 前端地址：confirm_url 指向它。开发时 Vite 在 5172，设为 http://localhost:5172；默认由后端托管构建产物。
 FRONTEND_BASE_URL = _env("FRONTEND_BASE_URL", PUBLIC_BASE_URL)
 # 前端构建产物目录（pnpm build 后的 dist）；不存在则不托管。
 FRONTEND_DIST = _env("FRONTEND_DIST", os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist"))

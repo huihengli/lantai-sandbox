@@ -6,5 +6,5 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const target = env.VITE_API_TARGET || "http://localhost:8001";
   const proxy = Object.fromEntries(["/api", "/ui", "/admin", "/healthz"].map((p) => [p, { target, changeOrigin: true }]));
-  return { plugins: [vue()], server: { port: 5173, proxy } };
+  return { plugins: [vue()], server: { port: 5172, proxy } };
 });

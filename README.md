@@ -39,11 +39,11 @@ docker compose -f infra/compose.yml up -d db           # 只起数据库，后�
 ```bash
 cd frontend
 pnpm install
-pnpm dev        # 开发：http://localhost:5173，自动代理 /api /ui /admin 到 http://localhost:8001
+pnpm dev        # 开发：http://localhost:5172，自动代理 /api /ui /admin 到 http://localhost:8001
 pnpm build      # 产出 frontend/dist，后端检测到后自动托管（访问后端根路径即可）
 ```
 
-- 开发模式下让 `prepare` 返回的 `confirm_url` 指向 5173：后端设 `FRONTEND_BASE_URL=http://localhost:5173`；后端地址不同则设 `frontend/.env.local` 的 `VITE_API_TARGET`。
+- 开发模式下让 `prepare` 返回的 `confirm_url` 指向 5172：后端设 `FRONTEND_BASE_URL=http://localhost:5172`；后端地址不同则设 `frontend/.env.local` 的 `VITE_API_TARGET`。
 - 页面：总览 · 账户流水 · 转账 · 定期存款 · **确认中心**（风险原因、OTP、确认/拒绝） · 助手授权（签发/撤销 Agent 令牌） · 审计记录 · 演示控制台（重置、模拟时钟、黑名单、一键触发风控规则）。
 - 设计依据：项目内 `.agents/skills/ui-ux-pro-max` 与 `design-system`（三层令牌、对比度 ≥ 4.5:1、可见焦点、减少动效、Phosphor 图标、44px 触控目标）。令牌见 `frontend/src/styles/tokens.css`。
 
