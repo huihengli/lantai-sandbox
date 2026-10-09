@@ -1,0 +1,130 @@
+/* 澜台设计令牌 —— 三层结构：原色(primitive) → 语义(semantic) → 组件(component)
+   主题：墨色夜（默认）/ 宣纸日。中国风元素：朱砂、鎏金、天青、宣纸、印章；科技感：细线框、角标、网格、微光。 */
+
+:root {
+  /* ---------- Layer 1 · Primitive ---------- */
+  --ink-950: #080d0f;
+  --ink-900: #0d1518;
+  --ink-850: #121d21;
+  --ink-800: #17252a;
+  --ink-700: #20333a;
+  --ink-600: #2c444d;
+
+  --zhusha-400: #e5594b; /* 朱砂 */
+  --zhusha-500: #d2402f;
+  --zhusha-600: #b82f22;
+  --zhusha-700: #8f2218;
+
+  --gold-300: #e8cf8e; /* 鎏金 */
+  --gold-400: #d6b36a;
+  --gold-500: #be9645;
+  --gold-700: #8a6b2b;
+
+  --tianqing-300: #8fe3d8; /* 天青 */
+  --tianqing-400: #4fcfbf;
+  --tianqing-500: #2bb3a3;
+  --tianqing-700: #167a70;
+
+  --xuan-50: #fbf8f1; /* 宣纸 */
+  --xuan-100: #f4efe4;
+  --xuan-200: #e9e1d0;
+  --xuan-300: #d8cdb6;
+
+  --amber-400: #e8a63a;
+  --amber-700: #8a5a0b;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+
+  --font-serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  --font-sans: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Source Han Sans SC", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+
+  --dur-fast: 140ms;
+  --dur-base: 220ms;
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+  --sidebar-w: 232px;
+}
+
+/* ---------- Layer 2 · Semantic（默认：墨色夜） ---------- */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --c-bg: var(--ink-950);
+  --c-bg-glow: radial-gradient(1100px 520px at 78% -8%, rgba(79, 207, 191, 0.12), transparent 60%),
+    radial-gradient(900px 480px at 8% 108%, rgba(210, 64, 47, 0.1), transparent 60%);
+  --c-surface: var(--ink-900);
+  --c-surface-2: var(--ink-850);
+  --c-surface-3: var(--ink-800);
+  --c-text: #ece8dc;
+  --c-text-muted: #9fadaa; /* 对 ink-900 对比度 ≥ 7:1 */
+  --c-border: rgba(214, 179, 106, 0.22);
+  --c-border-strong: rgba(214, 179, 106, 0.5);
+  --c-grid: rgba(143, 227, 216, 0.045);
+  --c-accent: var(--gold-400); /* 标题点缀、数字 */
+  --c-tech: var(--tianqing-400); /* 链接、科技线条 */
+  --c-primary: var(--zhusha-500); /* 主操作：朱砂 */
+  --c-primary-hover: var(--zhusha-600);
+  --c-on-primary: #ffffff;
+  --c-focus: var(--tianqing-300);
+  --c-danger: #ff7a6b;
+  --c-success: var(--tianqing-400);
+  --c-warn: var(--amber-400);
+  --c-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  --c-scrim: rgba(4, 8, 9, 0.72);
+  --risk-low: var(--tianqing-400);
+  --risk-medium: var(--amber-400);
+  --risk-high: #f0793a;
+  --risk-blocked: #ff6a5c;
+}
+
+/* ---------- 宣纸日 ---------- */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --c-bg: var(--xuan-100);
+  --c-bg-glow: radial-gradient(1000px 480px at 80% -10%, rgba(190, 150, 69, 0.18), transparent 60%),
+    radial-gradient(800px 420px at 5% 110%, rgba(184, 47, 34, 0.08), transparent 60%);
+  --c-surface: var(--xuan-50);
+  --c-surface-2: #f6f1e5;
+  --c-surface-3: var(--xuan-200);
+  --c-text: #1a1f1e;
+  --c-text-muted: #55605c; /* 对 xuan-50 对比度 ≈ 6:1 */
+  --c-border: rgba(138, 107, 43, 0.32);
+  --c-border-strong: rgba(138, 107, 43, 0.65);
+  --c-grid: rgba(138, 107, 43, 0.07);
+  --c-accent: var(--gold-700);
+  --c-tech: var(--tianqing-700);
+  --c-primary: var(--zhusha-600);
+  --c-primary-hover: var(--zhusha-700);
+  --c-focus: var(--tianqing-700);
+  --c-danger: #a8261b;
+  --c-success: var(--tianqing-700);
+  --c-warn: var(--amber-700);
+  --c-shadow: 0 8px 24px rgba(90, 70, 30, 0.14);
+  --c-scrim: rgba(40, 30, 10, 0.5);
+  --risk-low: var(--tianqing-700);
+  --risk-medium: var(--amber-700);
+  --risk-high: #b24a10;
+  --risk-blocked: #a8261b;
+}
+
+/* ---------- Layer 3 · Component ---------- */
+:root {
+  --panel-bg: var(--c-surface);
+  --panel-border: var(--c-border);
+  --panel-corner: var(--c-accent);
+  --btn-radius: var(--radius-sm);
+  --input-bg: var(--c-surface-2);
+  --input-border: var(--c-border);
+  --tap-min: 44px;
+}

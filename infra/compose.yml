@@ -1,0 +1,42 @@
+# 澜台本地环境。仅数据库：docker compose -f infra/compose.yml up -d db
+# 数据库 + 后端服务：   docker compose -f infra/compose.yml up -d --build
+# 未包含 Redis：当前方案（幂等、令牌、OTP、限额统计）全部落在数据库，没有需要它的场景。
+name: lantai
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-lantai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lantai_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-lantai}
+    ports:
+      - "${POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - lantai_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ../backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-lantai}:${POSTGRES_PASSWORD:-lantai_dev}@db:5432/${POSTGRES_DB:-lantai}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8001}
+      ADMIN_KEY: ${ADMIN_KEY:-dev-admin-key}
+      TIMEZONE_OFFSET: ${TIMEZONE_OFFSET:-+01:00}
+    ports:
+      - "${BACKEND_PORT:-8001}:8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  lantai_pgdata:
