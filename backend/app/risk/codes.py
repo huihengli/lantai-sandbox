@@ -24,6 +24,8 @@ CATALOG: dict[str, tuple[str, str, str]] = {
     "CONTROL_LOOSEN": ("medium", "将打开以下交易开关：{items}", "确认用户确有使用需求"),
     "CONTROL_OVERSEAS_ON": ("high", "将打开境外交易，存在被盗刷风险", "提醒仅在出境期间开启，用完及时关闭"),
     "LIMIT_RAISE": ("high", "单日额度将由 {old} 元提高到 {new} 元，被盗刷或诈骗时的潜在损失同步扩大", "询问提额原因，建议按需、临时提额"),
+    "MANDATE_CANCEL": ("low", "取消后「{merchant}」将无法继续从该账户扣款，下次扣款日 {date} 前如仍需要服务，可能导致中断或逾期",
+                       "提醒用户确认是否已在商户侧处理（如房租、信用卡还款需另行安排）"),
     "EARLY_WITHDRAW_LOSS": ("low", "提前支取将损失利息 {loss} 元（到期可得 {full} 元，现仅 {early} 元）",
                             "对比到期日期，建议用户权衡"),
 }

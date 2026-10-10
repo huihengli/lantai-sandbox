@@ -17,6 +17,7 @@ from app.security import ratelimit
 from app.schemas import BlacklistIn, ClockIn
 from app.seed.seed_data import reset_database
 from app.services import audit
+from app.services import mandates as mandate_svc
 
 
 def admin_only(request: Request) -> None:
@@ -107,3 +108,10 @@ def lock_card(card_id: str, request: Request, db: Session = Depends(get_db)):
         return {"card_id": card_id, "status": "locked"}
 
     return ok(request, audit.guarded(_ctx(request, db), "card_lock", run))
+
+
+@router.post("/mandates/{mandate_id}/charge")
+def charge_mandate(mandate_id: str, request: Request, db: Session = Depends(get_db)):
+    """演示用：模拟商户发起一次代扣。"""
+    ctx = _ctx(request, db)
+    return ok(request, audit.guarded(ctx, "mandate_charge", lambda: mandate_svc.charge(ctx, mandate_id)))

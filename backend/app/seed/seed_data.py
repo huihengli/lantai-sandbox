@@ -123,10 +123,16 @@ def seed() -> None:
         s.add(DepositHolding(id="hld_001", user_id="usr_001", account_id="acc_002", product_id="prd_3m",
                              principal_cents=2_000_000, start_date=start, maturity_date=add_months(start, 3)))
         s.add_all([
-            AutopayPlan(id="apy_001", account_id="acc_001", merchant="房租", amount_cents=350_000,
-                        next_debit_date=today + timedelta(days=3)),
-            AutopayPlan(id="apy_002", account_id="acc_001", merchant="信用卡还款", amount_cents=200_000,
-                        next_debit_date=today + timedelta(days=5)),
+            AutopayPlan(id="apy_001", account_id="acc_001", merchant="房东", amount_cents=350_000,
+                        next_debit_date=today + timedelta(days=3), merchant_category="居住"),
+            AutopayPlan(id="apy_002", account_id="acc_001", merchant="信用卡中心", amount_cents=200_000,
+                        next_debit_date=today + timedelta(days=5), merchant_category="还款"),
+            AutopayPlan(id="apy_003", account_id="acc_001", merchant="澜视频会员", amount_cents=2_500,
+                        next_debit_date=today + timedelta(days=8), merchant_category="订阅"),
+            AutopayPlan(id="apy_004", account_id="acc_001", merchant="澜云盘", amount_cents=900,
+                        next_debit_date=today + timedelta(days=18), merchant_category="订阅"),
+            AutopayPlan(id="apy_005", account_id="acc_001", merchant="澜音乐", amount_cents=1_500,
+                        next_debit_date=today + timedelta(days=25), merchant_category="订阅"),
         ])
         for cid, aid in [("crd_001", "acc_001"), ("crd_002", "acc_002"), ("crd_101", "acc_101")]:
             acc = next(a for a in ACCOUNTS if a[0] == aid)

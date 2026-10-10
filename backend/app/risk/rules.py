@@ -121,6 +121,11 @@ def limit_raise(c: RiskContext) -> list[dict]:
     return []
 
 
+@rule("mandate_cancel")
+def mandate_cancel(c: RiskContext) -> list[dict]:
+    return [reason("MANDATE_CANCEL", merchant=c.change["merchant"], date=c.change["date"])]
+
+
 @rule("deposit_early_withdraw")
 def early_withdraw_loss(c: RiskContext) -> list[dict]:
     e = c.early

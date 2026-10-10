@@ -98,3 +98,7 @@ class AccountLimitsIn(PrepareBase):
     account_id: str | None = None
     single_limit: str | None = None
     daily_limit: str | None = None
+
+
+class MandateCancelIn(PrepareBase):
+    mandate_id: str | None = None  # 由路径参数填充

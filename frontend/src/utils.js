@@ -28,7 +28,7 @@ export function greeting(date = new Date()) {
 export const OP_TYPE = {
   transfer: "转账", deposit_create: "存入定期", deposit_early_withdraw: "提前支取定期",
   card_apply: "申请新卡", card_unfreeze: "解冻/解锁卡片", card_reissue: "补发新卡", card_controls: "调整交易开关",
-  card_limits: "调整卡片额度", account_limits: "调整转账额度",
+  card_limits: "调整卡片额度", account_limits: "调整转账额度", mandate_cancel: "取消代扣",
 };
 
 /** 操作列表/卡片上的一行摘要：有金额显示金额，否则显示动作 */
@@ -68,7 +68,7 @@ export const SUMMARY_LABEL = {
   balance_after: "操作后余额", memo: "附言", product: "产品", term_months: "期限（月）", annual_rate: "年化利率",
   expected_interest: "到期利息", maturity_date: "到期日", principal: "本金", interest: "提前支取利息",
   interest_loss: "损失利息", total_credit: "到账合计",
-  action: "操作", card: "卡片", account: "账户", change: "变更内容",
+  action: "操作", card: "卡片", account: "账户", change: "变更内容", merchant: "商户",
 };
 const MONEY_KEYS = new Set(["amount", "fee", "total_debit", "balance_after", "expected_interest", "principal", "interest", "interest_loss", "total_credit"]);
 export const isMoneyKey = (k) => MONEY_KEYS.has(k);

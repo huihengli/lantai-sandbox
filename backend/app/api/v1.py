@@ -12,10 +12,10 @@ from app.errors import LantaiError
 from app.models import (Account, DepositHolding, DepositProduct, Payee, Transaction)
 from app.money import fmt, mask, parse_amount
 from app.schemas import (AccountLimitsIn, CardApplyIn, CardControlsIn, CardLimitsIn, CardOnlyIn, DepositIn,
-                         EarlyWithdrawIn, PayeeIn, PayeePatch, TransferIn)
+                         EarlyWithdrawIn, MandateCancelIn, PayeeIn, PayeePatch, TransferIn)
 from app.security.auth import Principal, make_ctx, require
 from app.services import account as acct
-from app.services import audit, cards as card_svc, deposit, operation, transfer
+from app.services import audit, cards as card_svc, deposit, mandates as mandate_svc, operation, transfer
 from app.services import payees as payee_svc
 
 router = APIRouter(prefix="/api/v1", tags=["agent"])
@@ -302,3 +302,19 @@ def account_limits_prepare(account_id: str, body: AccountLimitsIn, request: Requ
                            db: Session = Depends(get_db)):
     body.account_id = account_id
     return _prepare(request, db, p, "account_limits", body)
+
+
+# ---------------- 代扣协议 ----------------
+@router.get("/mandates")
+def mandates_list(request: Request, status: str | None = Query(None, pattern="^(active|cancelled)$"),
+                  p: Principal = READ, db: Session = Depends(get_db)):
+    """已授权的代扣协议（商户、金额、周期、下次扣款日）。订阅识别与续费提醒由 Agent 基于它与流水完成。"""
+    return ok(request, [mandate_svc.view(m) for m in mandate_svc.list_mandates(db, p.user.id, status)])
+
+
+@router.post("/mandates/{mandate_id}/cancel/prepare")
+def mandates_cancel_prepare(mandate_id: str, request: Request, body: MandateCancelIn | None = None,
+                            p: Principal = PREPARE, db: Session = Depends(get_db)):
+    body = body or MandateCancelIn()
+    body.mandate_id = mandate_id
+    return _prepare(request, db, p, "mandate_cancel", body)

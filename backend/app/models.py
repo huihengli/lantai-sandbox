@@ -108,7 +108,10 @@ class AutopayPlan(Base):
     merchant: Mapped[str] = mapped_column(String(64))
     amount_cents: Mapped[int] = mapped_column(BigInteger)
     next_debit_date: Mapped[date] = mapped_column(Date)
-    status: Mapped[str] = mapped_column(String(20), default="active")
+    cycle: Mapped[str] = mapped_column(String(10), default="monthly")  # monthly / yearly / weekly
+    merchant_category: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active / cancelled
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class PendingOperation(Base):
