@@ -9,7 +9,7 @@ import ReasonList from "../components/ReasonList.vue";
 import SummaryList from "../components/SummaryList.vue";
 import { api } from "../api";
 import { toast } from "../stores/session";
-import { ACTIVE_STATUS, OP_TYPE, errorText, fmtMoney, fmtTime } from "../utils";
+import { ACTIVE_STATUS, OP_TYPE, errorText, fmtTime, opHeadline } from "../utils";
 
 const route = useRoute();
 const router = useRouter();
@@ -98,7 +98,7 @@ onBeforeUnmount(() => { clearInterval(poll); clearInterval(tick); });
               <strong>{{ OP_TYPE[o.type] }}</strong>
               <OpStatusTag :status="o.status" />
             </div>
-            <div class="num amt">¥ {{ fmtMoney(o.summary.amount || o.summary.principal) }}</div>
+            <div class="num amt">{{ opHeadline(o.summary) }}</div>
             <div class="row between muted meta">
               <span class="row" style="gap: 4px">
                 <component :is="o.initiator === 'agent' ? PhRobot : PhUser" :size="14" aria-hidden="true" />{{ o.initiator === "agent" ? "智能助手" : "您" }}
@@ -173,7 +173,8 @@ onBeforeUnmount(() => { clearInterval(poll); clearInterval(tick); });
           <dl class="kv">
             <template v-if="detail.result.transaction_id"><dt>流水号</dt><dd class="mono">{{ detail.result.transaction_id }}</dd></template>
             <template v-if="detail.result.holding_id"><dt>持有编号</dt><dd class="mono">{{ detail.result.holding_id }}</dd></template>
-            <dt>账户余额</dt><dd class="num">¥ {{ fmtMoney(detail.result.balance_after) }}</dd>
+            <template v-if="detail.result.balance_after"><dt>账户余额</dt><dd class="num">¥ {{ fmtMoney(detail.result.balance_after) }}</dd></template>
+            <template v-if="detail.result.card_no_masked"><dt>新卡号</dt><dd class="mono">{{ detail.result.card_no_masked }}</dd></template>
             <dt>执行时间</dt><dd class="num">{{ fmtTime(detail.result.executed_at, true) }}</dd>
           </dl>
         </div>

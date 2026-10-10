@@ -11,16 +11,25 @@ from app.errors import LantaiError
 from app.models import PendingOperation, User
 from app.money import new_id
 from app.security import otp
-from app.services import audit, deposit, idempotency, transfer
+from app.services import audit, cards, deposit, idempotency, transfer
 
 ACTIVE = {"PREPARED", "OTP_PENDING", "OTP_VERIFIED"}
 
 NORMALIZE = {"transfer": transfer.normalize, "deposit_create": deposit.normalize_create,
-             "deposit_early_withdraw": deposit.normalize_early}
+             "deposit_early_withdraw": deposit.normalize_early,
+             "card_apply": cards.normalize_apply, "card_unfreeze": cards.normalize_card_only,
+             "card_reissue": cards.normalize_card_only, "card_controls": cards.normalize_controls,
+             "card_limits": cards.normalize_limits, "account_limits": cards.normalize_limits}
 BUILD = {"transfer": transfer.build_plan, "deposit_create": deposit.build_create_plan,
-         "deposit_early_withdraw": deposit.build_early_plan}
+         "deposit_early_withdraw": deposit.build_early_plan,
+         "card_apply": cards.build_apply_plan, "card_unfreeze": cards.build_unfreeze_plan,
+         "card_reissue": cards.build_reissue_plan, "card_controls": cards.build_controls_plan,
+         "card_limits": cards.build_card_limits_plan, "account_limits": cards.build_account_limits_plan}
 EXECUTE = {"transfer": transfer.execute, "deposit_create": deposit.execute_create,
-           "deposit_early_withdraw": deposit.execute_early}
+           "deposit_early_withdraw": deposit.execute_early,
+           "card_apply": cards.execute_apply, "card_unfreeze": cards.execute_unfreeze,
+           "card_reissue": cards.execute_reissue, "card_controls": cards.execute_controls,
+           "card_limits": cards.execute_card_limits, "account_limits": cards.execute_account_limits}
 
 
 def params_hash(params: dict) -> str:

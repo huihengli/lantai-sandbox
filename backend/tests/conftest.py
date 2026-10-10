@@ -38,7 +38,7 @@ class Actor:
         self.c = client
         r = client.post("/ui/login", json={"phone": phone, "password": "Lantai@2026"}).json()
         self.session = {"Authorization": "Bearer " + r["data"]["session_token"]}
-        g = client.post("/ui/agent-grants", json={"scopes": ["read", "prepare"]}, headers=self.session).json()
+        g = client.post("/ui/agent-grants", json={"scopes": ["read", "prepare", "protect"]}, headers=self.session).json()
         self.agent = {"Authorization": "Bearer " + g["data"]["agent_token"]}
         self.grant_id = g["data"]["grant_id"]
 

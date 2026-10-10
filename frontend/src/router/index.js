@@ -11,6 +11,7 @@ const routes = [
       { path: "transactions", name: "transactions", component: () => import("../views/TransactionsView.vue"), meta: { title: "账户流水" } },
       { path: "transfer", name: "transfer", component: () => import("../views/TransferView.vue"), meta: { title: "转账" } },
       { path: "payees", name: "payees", component: () => import("../views/PayeesView.vue"), meta: { title: "收款人" } },
+      { path: "cards", name: "cards", component: () => import("../views/CardsView.vue"), meta: { title: "卡片与额度" } },
       { path: "deposits", name: "deposits", component: () => import("../views/DepositsView.vue"), meta: { title: "定期存款" } },
       { path: "confirm/:id?", name: "confirm", component: () => import("../views/ConfirmCenterView.vue"), meta: { title: "确认中心" } },
       { path: "grants", name: "grants", component: () => import("../views/GrantsView.vue"), meta: { title: "助手授权" } },

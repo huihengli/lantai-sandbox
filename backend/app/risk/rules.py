@@ -90,6 +90,37 @@ def cross_bank_fee(c: RiskContext) -> list[dict]:
     return [reason("CROSS_BANK_FEE", fee=fmt(c.fee_cents))] if c.cross_bank else []
 
 
+@rule("card_apply")
+def card_apply(c: RiskContext) -> list[dict]:
+    return [reason("CARD_APPLY")]
+
+
+@rule("card_unfreeze")
+def card_unfreeze(c: RiskContext) -> list[dict]:
+    return [reason("CARD_UNFREEZE")]
+
+
+@rule("card_reissue")
+def card_reissue(c: RiskContext) -> list[dict]:
+    return [reason("CARD_REISSUE")]
+
+
+@rule("card_controls")
+def card_controls(c: RiskContext) -> list[dict]:
+    names = {"online": "线上支付", "overseas": "境外交易", "atm": "ATM 取现"}
+    loosen = c.change.get("loosen", [])
+    out = [reason("CONTROL_OVERSEAS_ON")] if "overseas" in loosen else []
+    rest = [names[k] for k in loosen if k != "overseas"]
+    return out + ([reason("CONTROL_LOOSEN", items="、".join(rest))] if rest else [])
+
+
+@rule("card_limits", "account_limits")
+def limit_raise(c: RiskContext) -> list[dict]:
+    if c.change.get("raise"):
+        return [reason("LIMIT_RAISE", old=c.change["old"], new=c.change["new"])]
+    return []
+
+
 @rule("deposit_early_withdraw")
 def early_withdraw_loss(c: RiskContext) -> list[dict]:
     e = c.early

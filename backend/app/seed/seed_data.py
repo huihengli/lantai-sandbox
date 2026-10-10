@@ -8,7 +8,7 @@ import random
 from datetime import timedelta
 
 from app import clock, config, db
-from app.models import (Account, AutopayPlan, Blacklist, DepositHolding, DepositProduct, Payee,
+from app.models import (Account, AutopayPlan, Blacklist, Card, DepositHolding, DepositProduct, Payee,
                         Transaction, User)
 from app.money import new_id
 from app.security.auth import hash_password
@@ -128,6 +128,12 @@ def seed() -> None:
             AutopayPlan(id="apy_002", account_id="acc_001", merchant="信用卡还款", amount_cents=200_000,
                         next_debit_date=today + timedelta(days=5)),
         ])
+        for cid, aid in [("crd_001", "acc_001"), ("crd_002", "acc_002"), ("crd_101", "acc_101")]:
+            acc = next(a for a in ACCOUNTS if a[0] == aid)
+            s.add(Card(id=cid, user_id=acc[1], account_id=aid, card_no=acc[2], type="debit", status="active",
+                       online_enabled=True, overseas_enabled=False, atm_enabled=True,
+                       single_limit_cents=config.CARD_DEFAULT_SINGLE_CENTS,
+                       daily_limit_cents=config.CARD_DEFAULT_DAILY_CENTS, created_at=now - timedelta(days=400)))
         s.flush()
         _history(s, now)
         s.commit()

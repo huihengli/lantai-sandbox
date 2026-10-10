@@ -11,16 +11,18 @@ from app.db import get_db
 from app.errors import LantaiError
 from app.models import (Account, DepositHolding, DepositProduct, Payee, Transaction)
 from app.money import fmt, mask, parse_amount
-from app.schemas import DepositIn, EarlyWithdrawIn, PayeeIn, PayeePatch, TransferIn
+from app.schemas import (AccountLimitsIn, CardApplyIn, CardControlsIn, CardLimitsIn, CardOnlyIn, DepositIn,
+                         EarlyWithdrawIn, PayeeIn, PayeePatch, TransferIn)
 from app.security.auth import Principal, make_ctx, require
 from app.services import account as acct
-from app.services import audit, deposit, operation, transfer
+from app.services import audit, cards as card_svc, deposit, operation, transfer
 from app.services import payees as payee_svc
 
 router = APIRouter(prefix="/api/v1", tags=["agent"])
 
 READ = Depends(require("read"))
 PREPARE = Depends(require("prepare"))
+PROTECT = Depends(require("protect"))  # 收紧类（保护性）直接操作
 
 
 def _account_view(a: Account) -> dict:
@@ -206,3 +208,97 @@ def precheck(body: TransferIn, request: Request, p: Principal = READ, db: Sessio
         return {"summary": plan.summary, "risk": plan.risk}
 
     return ok(request, audit.guarded(ctx, "risk_precheck", run))
+
+
+# ---------------- 卡片与额度 ----------------
+@router.get("/cards")
+def cards_list(request: Request, p: Principal = READ, db: Session = Depends(get_db)):
+    return ok(request, [card_svc.view(c) for c in card_svc.list_cards(db, p.user.id)])
+
+
+@router.get("/cards/{card_id}")
+def cards_get(card_id: str, request: Request, p: Principal = READ, db: Session = Depends(get_db)):
+    return ok(request, card_svc.view(card_svc.get_owned(db, p.user.id, card_id)))
+
+
+def _direct(request: Request, db: Session, p: Principal, action: str, fn):
+    ctx = make_ctx(request, db, p)
+    return ok(request, audit.guarded(ctx, action, lambda: fn(ctx)))
+
+
+@router.post("/cards/{card_id}/freeze")
+def cards_freeze(card_id: str, request: Request, p: Principal = PROTECT, db: Session = Depends(get_db)):
+    """冻结卡片（保护性，立即生效）。"""
+    return _direct(request, db, p, "card_freeze", lambda ctx: card_svc.freeze(ctx, p.user, card_id))
+
+
+@router.post("/cards/{card_id}/report-loss")
+def cards_report_loss(card_id: str, request: Request, p: Principal = PROTECT, db: Session = Depends(get_db)):
+    """挂失卡片（保护性，立即生效，不可撤销；补发走 reissue/prepare）。"""
+    return _direct(request, db, p, "card_report_loss", lambda ctx: card_svc.report_loss(ctx, p.user, card_id))
+
+
+@router.put("/cards/{card_id}/controls")
+def cards_controls_tighten(card_id: str, body: CardControlsIn, request: Request, p: Principal = PROTECT,
+                           db: Session = Depends(get_db)):
+    """关闭交易开关（立即生效）。打开开关会返回 CONFIRM_REQUIRED，需走 controls/prepare。"""
+    changes = {k: getattr(body, k) for k in card_svc.CONTROLS if getattr(body, k) is not None}
+    return _direct(request, db, p, "card_controls_tighten", lambda ctx: card_svc.tighten_controls(ctx, p.user, card_id, changes))
+
+
+@router.put("/cards/{card_id}/limits")
+def cards_limits_lower(card_id: str, body: CardLimitsIn, request: Request, p: Principal = PROTECT,
+                       db: Session = Depends(get_db)):
+    """调低卡片额度（立即生效）。调高会返回 CONFIRM_REQUIRED，需走 limits/prepare。"""
+    return _direct(request, db, p, "card_limits_lower",
+                   lambda ctx: card_svc.lower_limits(ctx, p.user, card_id, *card_svc.parse_limits(body)))
+
+
+@router.put("/accounts/{account_id}/limits")
+def account_limits_lower(account_id: str, body: AccountLimitsIn, request: Request, p: Principal = PROTECT,
+                         db: Session = Depends(get_db)):
+    """调低账户转账额度（立即生效）。调高需走 limits/prepare。"""
+    return _direct(request, db, p, "account_limits_lower",
+                   lambda ctx: card_svc.lower_account_limits(ctx, p.user, account_id, *card_svc.parse_limits(body)))
+
+
+@router.post("/cards/apply/prepare")
+def cards_apply_prepare(body: CardApplyIn, request: Request, p: Principal = PREPARE, db: Session = Depends(get_db)):
+    return _prepare(request, db, p, "card_apply", body)
+
+
+@router.post("/cards/{card_id}/unfreeze/prepare")
+def cards_unfreeze_prepare(card_id: str, request: Request, body: CardOnlyIn | None = None, p: Principal = PREPARE,
+                           db: Session = Depends(get_db)):
+    body = body or CardOnlyIn()
+    body.card_id = card_id
+    return _prepare(request, db, p, "card_unfreeze", body)
+
+
+@router.post("/cards/{card_id}/reissue/prepare")
+def cards_reissue_prepare(card_id: str, request: Request, body: CardOnlyIn | None = None, p: Principal = PREPARE,
+                          db: Session = Depends(get_db)):
+    body = body or CardOnlyIn()
+    body.card_id = card_id
+    return _prepare(request, db, p, "card_reissue", body)
+
+
+@router.post("/cards/{card_id}/controls/prepare")
+def cards_controls_prepare(card_id: str, body: CardControlsIn, request: Request, p: Principal = PREPARE,
+                           db: Session = Depends(get_db)):
+    body.card_id = card_id
+    return _prepare(request, db, p, "card_controls", body)
+
+
+@router.post("/cards/{card_id}/limits/prepare")
+def cards_limits_prepare(card_id: str, body: CardLimitsIn, request: Request, p: Principal = PREPARE,
+                         db: Session = Depends(get_db)):
+    body.card_id = card_id
+    return _prepare(request, db, p, "card_limits", body)
+
+
+@router.post("/accounts/{account_id}/limits/prepare")
+def account_limits_prepare(account_id: str, body: AccountLimitsIn, request: Request, p: Principal = PREPARE,
+                           db: Session = Depends(get_db)):
+    body.account_id = account_id
+    return _prepare(request, db, p, "account_limits", body)

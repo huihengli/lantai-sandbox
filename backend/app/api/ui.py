@@ -59,7 +59,7 @@ def create_grant(body: GrantIn, request: Request, p: Principal = Depends(require
     def run():
         bad = set(body.scopes) - auth.AGENT_ALLOWED_SCOPES
         if bad or not body.scopes:
-            raise LantaiError("SCOPE_INSUFFICIENT", f"Agent 令牌只能包含 read/prepare，拒绝: {sorted(bad)}")
+            raise LantaiError("SCOPE_INSUFFICIENT", f"Agent 令牌只能包含 read/prepare/protect，拒绝: {sorted(bad)}")
         ttl = min(body.ttl_seconds or config.AGENT_TOKEN_TTL_SECONDS, config.AGENT_TOKEN_MAX_TTL_SECONDS)
         token, row = auth.issue_token(db, "agent_token", p.user.id, sorted(set(body.scopes)), ttl,
                                       issued_by=p.token.id)

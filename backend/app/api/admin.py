@@ -11,7 +11,7 @@ from app.api.common import ok
 from app.api.ui import audit_row
 from app.db import SessionLocal, get_db
 from app.errors import LantaiError
-from app.models import AuditLog, Blacklist
+from app.models import AuditLog, Blacklist, Card
 from app.money import new_id
 from app.security import ratelimit
 from app.schemas import BlacklistIn, ClockIn
@@ -93,3 +93,17 @@ def delete_blacklist(item_id: str, request: Request, db: Session = Depends(get_d
 def all_audit(request: Request, db: Session = Depends(get_db), limit: int = 200):
     rows = db.scalars(select(AuditLog).order_by(AuditLog.id.desc()).limit(min(limit, 1000)))
     return ok(request, [audit_row(r) for r in rows])
+
+
+@router.post("/cards/{card_id}/lock")
+def lock_card(card_id: str, request: Request, db: Session = Depends(get_db)):
+    """演示用：模拟连续输错 PIN 导致卡片被锁定。"""
+    def run():
+        card = db.get(Card, card_id)
+        if card is None:
+            raise LantaiError("VALIDATION_ERROR", "卡片不存在")
+        card.status, card.status_changed_at = "locked", clock.now()
+        audit.log(_ctx(request, db), "card_lock", detail={"card_id": card_id})
+        return {"card_id": card_id, "status": "locked"}
+
+    return ok(request, audit.guarded(_ctx(request, db), "card_lock", run))

@@ -18,6 +18,12 @@ CATALOG: dict[str, tuple[str, str, str]] = {
     "AUTOPAY_AT_RISK": ("low", "转出后余额可能不足以覆盖 {days} 天内的自动扣款（{items}）",
                         "告知具体扣款项与日期"),
     "CROSS_BANK_FEE": ("low", "跨行转账将收取手续费 {fee} 元", "向用户说明手续费"),
+    "CARD_APPLY": ("low", "将为该账户新增一张借记卡", "提醒用户新卡需妥善保管"),
+    "CARD_UNFREEZE": ("medium", "解冻/解锁卡片后，卡片渠道的交易将恢复", "确认是用户本人要求解冻，且已排除盗刷风险"),
+    "CARD_REISSUE": ("medium", "补发新卡，原卡号将作废", "确认用户已挂失原卡"),
+    "CONTROL_LOOSEN": ("medium", "将打开以下交易开关：{items}", "确认用户确有使用需求"),
+    "CONTROL_OVERSEAS_ON": ("high", "将打开境外交易，存在被盗刷风险", "提醒仅在出境期间开启，用完及时关闭"),
+    "LIMIT_RAISE": ("high", "单日额度将由 {old} 元提高到 {new} 元，被盗刷或诈骗时的潜在损失同步扩大", "询问提额原因，建议按需、临时提额"),
     "EARLY_WITHDRAW_LOSS": ("low", "提前支取将损失利息 {loss} 元（到期可得 {full} 元，现仅 {early} 元）",
                             "对比到期日期，建议用户权衡"),
 }

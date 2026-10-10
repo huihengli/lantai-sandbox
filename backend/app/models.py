@@ -1,7 +1,7 @@
 """数据表定义。金额一律为整数分；时间为 naive UTC。"""
 from datetime import date, datetime
 
-from sqlalchemy import (BigInteger, CheckConstraint, Date, DateTime, ForeignKey, Index,
+from sqlalchemy import (BigInteger, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index,
                         Integer, String, Text, UniqueConstraint)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -196,3 +196,21 @@ class AuditLog(Base):
     error_code: Mapped[str | None] = mapped_column(String(40), nullable=True)
     detail_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     request_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+
+class Card(Base):
+    __tablename__ = "cards"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id"))
+    card_no: Mapped[str] = mapped_column(String(32), unique=True)
+    type: Mapped[str] = mapped_column(String(10), default="debit")
+    status: Mapped[str] = mapped_column(String(10), default="active")  # active / frozen / locked / lost
+    online_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    overseas_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    atm_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    single_limit_cents: Mapped[int] = mapped_column(BigInteger)
+    daily_limit_cents: Mapped[int] = mapped_column(BigInteger)
+    replaced_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    status_changed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

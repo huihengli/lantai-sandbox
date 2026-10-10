@@ -3,7 +3,7 @@ import { onBeforeUnmount, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import {
   PhHouse, PhArrowsLeftRight, PhVault, PhShieldCheck, PhKey, PhClockCounterClockwise,
-  PhSlidersHorizontal, PhSun, PhMoon, PhSignOut, PhListBullets, PhUsers,
+  PhSlidersHorizontal, PhSun, PhMoon, PhSignOut, PhListBullets, PhUsers, PhCreditCard,
 } from "@phosphor-icons/vue";
 import SealLogo from "../components/SealLogo.vue";
 import { api } from "../api";
@@ -16,6 +16,7 @@ const nav = [
   { to: "/transactions", label: "账户流水", icon: PhListBullets },
   { to: "/transfer", label: "转账", icon: PhArrowsLeftRight },
   { to: "/payees", label: "收款人", icon: PhUsers },
+  { to: "/cards", label: "卡片与额度", icon: PhCreditCard },
   { to: "/deposits", label: "定期存款", icon: PhVault },
   { to: "/confirm", label: "确认中心", icon: PhShieldCheck, badge: true },
   { to: "/grants", label: "助手授权", icon: PhKey },

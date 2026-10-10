@@ -41,7 +41,7 @@ class LoginIn(BaseModel):
 
 
 class GrantIn(BaseModel):
-    scopes: list[str] = ["read", "prepare"]
+    scopes: list[str] = ["read", "prepare", "protect"]
     ttl_seconds: int | None = Field(None, gt=0)
 
 
@@ -71,3 +71,30 @@ class PayeeIn(BaseModel):
 
 class PayeePatch(BaseModel):
     alias: str | None = Field(None, max_length=32)
+
+
+class CardApplyIn(PrepareBase):
+    account_id: str
+
+
+class CardOnlyIn(PrepareBase):
+    card_id: str | None = None  # 由路径参数填充
+
+
+class CardControlsIn(PrepareBase):
+    card_id: str | None = None
+    online: bool | None = None
+    overseas: bool | None = None
+    atm: bool | None = None
+
+
+class CardLimitsIn(PrepareBase):
+    card_id: str | None = None
+    single_limit: str | None = None
+    daily_limit: str | None = None
+
+
+class AccountLimitsIn(PrepareBase):
+    account_id: str | None = None
+    single_limit: str | None = None
+    daily_limit: str | None = None

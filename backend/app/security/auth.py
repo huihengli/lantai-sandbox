@@ -17,8 +17,8 @@ from app.models import AuthToken, User
 from app.money import new_id
 from app.services import audit
 
-USER_SCOPES = ["read", "prepare", "confirm", "otp", "grant"]
-AGENT_ALLOWED_SCOPES = {"read", "prepare"}
+USER_SCOPES = ["read", "prepare", "protect", "confirm", "otp", "grant"]
+AGENT_ALLOWED_SCOPES = {"read", "prepare", "protect"}  # protect：仅限收紧类（保护性）直接操作
 
 
 @dataclass

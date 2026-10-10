@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, ref } from "vue";
-import { PhKey, PhCopy, PhCheck, PhProhibit, PhEye, PhPaperPlaneTilt } from "@phosphor-icons/vue";
+import { PhKey, PhCopy, PhCheck, PhProhibit, PhEye, PhPaperPlaneTilt, PhShieldCheck } from "@phosphor-icons/vue";
 import PageHeader from "../components/PageHeader.vue";
 import { api } from "../api";
 import { toast } from "../stores/session";
@@ -80,6 +80,7 @@ async function revoke(g) {
       <ul class="bounds">
         <li class="yes"><PhEye :size="20" aria-hidden="true" /><div><strong>read</strong><br /><span class="muted">查询账户、流水、收款人、定期产品与持有</span></div></li>
         <li class="yes"><PhPaperPlaneTilt :size="20" aria-hidden="true" /><div><strong>prepare</strong><br /><span class="muted">发起转账/定期的“预处理”并取消自己发起的操作</span></div></li>
+        <li class="yes"><PhShieldCheck :size="20" aria-hidden="true" /><div><strong>protect</strong><br /><span class="muted">仅限“收紧”类直接操作：冻结/挂失卡片、关闭交易开关、调低额度。放宽类（解冻、提额、开境外）仍需您确认。</span></div></li>
         <li class="no"><PhProhibit :size="20" aria-hidden="true" /><div><strong>confirm / otp</strong><br /><span class="muted">永不签发。确认与验证码只能由您在用户界面完成；智能助手调用将被拒绝并记入审计。</span></div></li>
       </ul>
     </section>
