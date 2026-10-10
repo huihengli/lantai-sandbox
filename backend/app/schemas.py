@@ -102,3 +102,13 @@ class AccountLimitsIn(PrepareBase):
 
 class MandateCancelIn(PrepareBase):
     mandate_id: str | None = None  # 由路径参数填充
+
+
+class HoldIn(BaseModel):
+    amount: str
+    purpose: str | None = Field(None, max_length=60)
+    until: str | None = None  # ISO8601 日期/时间；留空表示直到释放
+
+
+class HoldReleaseIn(PrepareBase):
+    hold_id: str | None = None  # 由路径参数填充

@@ -67,8 +67,10 @@ def build_create_plan(db: Session, user: User, params: dict, now, lock: bool = F
         raise LantaiError("AMOUNT_BELOW_MIN", f"低于起存额 {fmt(prod.min_amount_cents)} 元")
     if prod.max_amount_cents and amount > prod.max_amount_cents:
         raise LantaiError("AMOUNT_ABOVE_MAX", f"高于限额 {fmt(prod.max_amount_cents)} 元")
-    if acc.balance_cents < amount:
-        raise LantaiError("INSUFFICIENT_BALANCE", "余额不足", {"balance": fmt(acc.balance_cents)})
+    avail = acct.available_cents(db, acc)
+    if avail < amount:
+        raise LantaiError("INSUFFICIENT_BALANCE", "可用余额不足" if avail < acc.balance_cents else "余额不足",
+                          {"balance": fmt(acc.balance_cents), "available": fmt(avail)})
     start = clock.local(now).date()
     summary = {"from": f"{acct.TYPE_LABEL.get(acc.type, acc.type)} {mask(acc.account_no)}",
                "product": prod.name, "term_months": prod.term_months,

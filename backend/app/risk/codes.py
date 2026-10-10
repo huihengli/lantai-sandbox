@@ -26,6 +26,8 @@ CATALOG: dict[str, tuple[str, str, str]] = {
     "LIMIT_RAISE": ("high", "单日额度将由 {old} 元提高到 {new} 元，被盗刷或诈骗时的潜在损失同步扩大", "询问提额原因，建议按需、临时提额"),
     "MANDATE_CANCEL": ("low", "取消后「{merchant}」将无法继续从该账户扣款，下次扣款日 {date} 前如仍需要服务，可能导致中断或逾期",
                        "提醒用户确认是否已在商户侧处理（如房租、信用卡还款需另行安排）"),
+    "HOLD_RELEASE": ("low", "将释放预留的 {amount} 元（用途：{purpose}），释放后这笔资金可被转出或支付",
+                     "确认用户是有意提前动用这笔预留，而非被诱导"),
     "EARLY_WITHDRAW_LOSS": ("low", "提前支取将损失利息 {loss} 元（到期可得 {full} 元，现仅 {early} 元）",
                             "对比到期日期，建议用户权衡"),
 }

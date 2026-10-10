@@ -66,6 +66,7 @@ onMounted(async () => {
           <span class="mono muted">{{ a.account_no_masked }}</span>
         </div>
         <p class="bal num">¥ {{ fmtMoney(a.balance) }}</p>
+        <p v-if="Number(a.held)" class="muted num held">其中已预留 ¥ {{ fmtMoney(a.held) }} · 可用 ¥ {{ fmtMoney(a.available) }}</p>
         <div class="limit">
           <div class="row between"><span class="muted">今日已转出</span><span class="num">{{ fmtMoney(a.today_transferred_out) }} / {{ fmtMoney(a.daily_limit) }}</span></div>
           <div class="bar" role="progressbar" :aria-valuenow="usedPct(a)" aria-valuemin="0" aria-valuemax="100" :aria-label="`日限额已使用 ${usedPct(a)}%`">
@@ -126,6 +127,7 @@ onMounted(async () => {
 .alert-link { text-decoration: none; color: var(--c-text); align-items: center; }
 .total .big { font-family: var(--font-serif); font-size: clamp(2rem, 6vw, 3rem); color: var(--c-accent); margin: 6px 0; letter-spacing: 0.04em; }
 .bal { font-family: var(--font-serif); font-size: 1.9rem; margin-bottom: var(--space-4); }
+.held { margin-top: calc(-1 * var(--space-3)); margin-bottom: var(--space-4); font-size: 0.86rem; }
 .bar { height: 6px; margin: 8px 0 4px; background: var(--c-surface-3); border-radius: 3px; overflow: hidden; }
 .bar span { display: block; height: 100%; background: linear-gradient(90deg, var(--c-tech), var(--c-accent)); transition: width 0.6s var(--ease); }
 .list li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px dashed var(--c-border); }

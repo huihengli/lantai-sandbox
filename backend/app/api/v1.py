@@ -12,10 +12,11 @@ from app.errors import LantaiError
 from app.models import (Account, DepositHolding, DepositProduct, Payee, Transaction)
 from app.money import fmt, mask, parse_amount
 from app.schemas import (AccountLimitsIn, CardApplyIn, CardControlsIn, CardLimitsIn, CardOnlyIn, DepositIn,
-                         EarlyWithdrawIn, MandateCancelIn, PayeeIn, PayeePatch, TransferIn)
+                         EarlyWithdrawIn, HoldIn, HoldReleaseIn, MandateCancelIn, PayeeIn, PayeePatch,
+                         TransferIn)
 from app.security.auth import Principal, make_ctx, require
 from app.services import account as acct
-from app.services import audit, cards as card_svc, deposit, mandates as mandate_svc, operation, transfer
+from app.services import audit, cards as card_svc, deposit, holds as hold_svc, mandates as mandate_svc, operation, transfer
 from app.services import payees as payee_svc
 
 router = APIRouter(prefix="/api/v1", tags=["agent"])
@@ -54,7 +55,8 @@ def balance(account_id: str, request: Request, p: Principal = READ, db: Session 
     used = db.scalar(select(func.coalesce(func.sum(Transaction.amount_cents), 0)).where(
         Transaction.account_id == a.id, Transaction.direction == "out", Transaction.category == "transfer",
         Transaction.occurred_at >= clock.local_day_start_utc(clock.now())))
-    return ok(request, {**_account_view(a), "available": fmt(a.balance_cents),
+    held = acct.held_amount(db, a.id)
+    return ok(request, {**_account_view(a), "held": fmt(held), "available": fmt(a.balance_cents - held),
                         "single_limit": fmt(a.single_limit_cents), "daily_limit": fmt(a.daily_limit_cents),
                         "today_transferred_out": fmt(int(used)),
                         "daily_remaining": fmt(max(a.daily_limit_cents - int(used), 0))})
@@ -318,3 +320,28 @@ def mandates_cancel_prepare(mandate_id: str, request: Request, body: MandateCanc
     body = body or MandateCancelIn()
     body.mandate_id = mandate_id
     return _prepare(request, db, p, "mandate_cancel", body)
+
+
+# ---------------- 资金预留 ----------------
+@router.get("/accounts/{account_id}/holds")
+def holds_list(account_id: str, request: Request, status: str | None = Query(None, pattern="^(active|released|expired)$"),
+               p: Principal = READ, db: Session = Depends(get_db)):
+    a = _owned(db, p, account_id)
+    out = [hold_svc.view(h) for h in hold_svc.list_holds(db, a.id, status)]
+    db.commit()  # list_holds 会把到期预留惰性转为 expired
+    return ok(request, out)
+
+
+@router.post("/accounts/{account_id}/holds")
+def holds_create(account_id: str, body: HoldIn, request: Request, p: Principal = PROTECT,
+                 db: Session = Depends(get_db)):
+    """预留（锁定）一笔资金：收紧类操作，直接生效。释放需 holds/{id}/release/prepare 并由用户确认。"""
+    return _direct(request, db, p, "hold_create", lambda ctx: hold_svc.create(ctx, p.user, account_id, body))
+
+
+@router.post("/holds/{hold_id}/release/prepare")
+def holds_release_prepare(hold_id: str, request: Request, body: HoldReleaseIn | None = None,
+                          p: Principal = PREPARE, db: Session = Depends(get_db)):
+    body = body or HoldReleaseIn()
+    body.hold_id = hold_id
+    return _prepare(request, db, p, "hold_release", body)

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app import clock, config
 from app.models import Account, AutopayPlan, Transaction
+from app.services.account import held_amount
 from app.risk import rules
 from app.risk.codes import SEVERITY_ORDER
 from app.risk.context import RiskContext
@@ -29,7 +30,7 @@ def build_context(db: Session, user_id: str, account: Account, op_type: str, amo
         AutopayPlan.next_debit_date <= today + timedelta(days=config.AUTOPAY_LOOKAHEAD_DAYS))).all()
     return RiskContext(
         op_type=op_type, account=account, amount_cents=amount_cents, fee_cents=fee_cents, now=now,
-        local_now=clock.local(now), today_out_cents=int(today_out), recent_out_count=int(recent),
+        local_now=clock.local(now), held_cents=held_amount(db, account.id), today_out_cents=int(today_out), recent_out_count=int(recent),
         autopays=[(a.merchant, a.amount_cents, a.next_debit_date.isoformat()) for a in autopays],
         **extra)
 

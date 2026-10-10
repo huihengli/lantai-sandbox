@@ -57,7 +57,7 @@ def large_amount(c: RiskContext) -> list[dict]:
 @rule("transfer")
 def high_balance_ratio(c: RiskContext) -> list[dict]:
     ratio = Decimal(config.HIGH_BALANCE_RATIO)
-    if Decimal(c.amount_cents) > Decimal(c.account.balance_cents) * ratio:
+    if Decimal(c.amount_cents) > Decimal(c.account.balance_cents - c.held_cents) * ratio:
         return [reason("HIGH_BALANCE_RATIO", ratio=f"{int(ratio * 100)}%")]
     return []
 
@@ -79,7 +79,7 @@ def night(c: RiskContext) -> list[dict]:
 @rule("transfer", "deposit_create")
 def autopay_at_risk(c: RiskContext) -> list[dict]:
     due = sum(a for _, a, _ in c.autopays)
-    if due and c.account.balance_cents - c.amount_cents - c.fee_cents < due:
+    if due and c.account.balance_cents - c.held_cents - c.amount_cents - c.fee_cents < due:
         items = "、".join(f"{m} {fmt(a)} 元 {d}" for m, a, d in c.autopays)
         return [reason("AUTOPAY_AT_RISK", days=str(config.AUTOPAY_LOOKAHEAD_DAYS), items=items)]
     return []
@@ -124,6 +124,11 @@ def limit_raise(c: RiskContext) -> list[dict]:
 @rule("mandate_cancel")
 def mandate_cancel(c: RiskContext) -> list[dict]:
     return [reason("MANDATE_CANCEL", merchant=c.change["merchant"], date=c.change["date"])]
+
+
+@rule("hold_release")
+def hold_release(c: RiskContext) -> list[dict]:
+    return [reason("HOLD_RELEASE", amount=c.change["amount"], purpose=c.change["purpose"])]
 
 
 @rule("deposit_early_withdraw")
