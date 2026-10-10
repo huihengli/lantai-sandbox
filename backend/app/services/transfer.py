@@ -10,6 +10,7 @@ from app.models import HOME_BANK, Account, Blacklist, Payee, User
 from app.money import fmt, mask, new_id, parse_amount, round_cents
 from app.risk import engine
 from app.services import account as acct
+from app.services import payees
 from app.services.plan import Plan
 
 
@@ -30,13 +31,15 @@ def normalize(db: Session, user: User, body) -> dict:
         if row is None or row.user_id != user.id or row.status != "active":
             raise LantaiError("PAYEE_NOT_FOUND", "收款人不存在")
     else:
-        if not (body.payee_account_no and body.payee_name):
-            raise LantaiError("PAYEE_NOT_FOUND", "需提供 payee_id，或 payee_account_no + payee_name")
-        bank_code = body.bank_code or HOME_BANK
-        row = db.scalar(select(Payee).where(Payee.user_id == user.id, Payee.account_no == body.payee_account_no,
+        account_no, bank_code = body.payee_account_no, body.bank_code or HOME_BANK
+        if body.payee_phone and not account_no:  # 手机号收款：解析为行内主账户，仍需完整户名核验
+            account_no, bank_code = payees.account_no_by_phone(user, db, body.payee_phone), HOME_BANK
+        if not (account_no and body.payee_name):
+            raise LantaiError("PAYEE_NOT_FOUND", "需提供 payee_id，或 payee_account_no / payee_phone + payee_name")
+        row = db.scalar(select(Payee).where(Payee.user_id == user.id, Payee.account_no == account_no,
                                             Payee.bank_code == bank_code, Payee.status == "active"))
         if row is None:
-            payee = {"payee_id": None, "account_no": body.payee_account_no, "name": body.payee_name,
+            payee = {"payee_id": None, "account_no": account_no, "name": body.payee_name,
                      "bank_code": bank_code,
                      "bank_name": "澜台" if bank_code == HOME_BANK else (body.bank_name or "他行")}
     if row is not None:

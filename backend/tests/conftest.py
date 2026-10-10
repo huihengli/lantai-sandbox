@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from app import clock  # noqa: E402
 from app.main import app  # noqa: E402
+from app.security import ratelimit  # noqa: E402
 from app.seed.seed_data import reset_database  # noqa: E402
 
 ADMIN = {"X-Admin-Key": "dev-admin-key"}
@@ -17,6 +18,7 @@ ADMIN = {"X-Admin-Key": "dev-admin-key"}
 @pytest.fixture(autouse=True)
 def fresh_db():
     clock.reset()
+    ratelimit.reset()
     local = clock.local(clock.now())
     clock.set_time(datetime(local.year, local.month, local.day, 14, 0))  # 固定在白天，避免夜间提示干扰
     reset_database()

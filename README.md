@@ -116,3 +116,4 @@ curl -s localhost:8001/api/v1/transfers/prepare -H "Authorization: Bearer $AGENT
 | 模块 | 接口 | 说明 |
 |---|---|---|
 | 1 流水增强 | `GET /api/v1/accounts/{id}/transactions?keyword=&counterparty=&merchant_category=` | 备注/对方关键词、商户品类检索；种子含 14 个月历史、周期性扣款、异常交易 |
+| 2 收款人管理 | `GET/POST /api/v1/payees`、`PATCH/DELETE /api/v1/payees/{id}`、`GET /api/v1/payees/resolve?phone=` | 添加（行内核验户名、拦截黑名单）、备注名、软删除、搜索；手机号仅返回脱敏户名并限频；转账支持 `payee_phone` + 完整户名 |

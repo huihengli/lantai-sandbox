@@ -13,6 +13,7 @@ from app.db import SessionLocal, get_db
 from app.errors import LantaiError
 from app.models import AuditLog, Blacklist
 from app.money import new_id
+from app.security import ratelimit
 from app.schemas import BlacklistIn, ClockIn
 from app.seed.seed_data import reset_database
 from app.services import audit
@@ -33,6 +34,7 @@ def _ctx(request: Request, db: Session) -> audit.Ctx:
 @router.post("/reset")
 def reset(request: Request):
     reset_database()
+    ratelimit.reset()
     with SessionLocal() as db:  # 重置后写一条 reset 事件
         ctx = _ctx(request, db)
         audit.log(ctx, "reset")

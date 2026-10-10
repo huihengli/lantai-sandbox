@@ -11,10 +11,11 @@ from app.db import get_db
 from app.errors import LantaiError
 from app.models import (Account, DepositHolding, DepositProduct, Payee, Transaction)
 from app.money import fmt, mask, parse_amount
-from app.schemas import DepositIn, EarlyWithdrawIn, TransferIn
+from app.schemas import DepositIn, EarlyWithdrawIn, PayeeIn, PayeePatch, TransferIn
 from app.security.auth import Principal, make_ctx, require
 from app.services import account as acct
 from app.services import audit, deposit, operation, transfer
+from app.services import payees as payee_svc
 
 router = APIRouter(prefix="/api/v1", tags=["agent"])
 
@@ -108,12 +109,37 @@ def transactions(account_id: str, request: Request, p: Principal = READ, db: Ses
 
 
 @router.get("/payees")
-def payees(request: Request, p: Principal = READ, db: Session = Depends(get_db)):
-    rows = db.scalars(select(Payee).where(Payee.user_id == p.user.id, Payee.status == "active"))
-    return ok(request, [{"id": r.id, "name": r.name, "account_no_masked": mask(r.account_no),
-                         "bank": r.bank_name, "bank_code": r.bank_code,
-                         "ever_paid": r.first_paid_at is not None,
-                         "first_paid_at": clock.iso(r.first_paid_at)} for r in rows])
+def payees_list(request: Request, q: str | None = Query(None, max_length=30), p: Principal = READ,
+                db: Session = Depends(get_db)):
+    return ok(request, [payee_svc.view(r) for r in payee_svc.list_payees(db, p.user.id, q)])
+
+
+@router.get("/payees/resolve")
+def payees_resolve(request: Request, phone: str = Query(..., pattern=r"^\d{11}$"), p: Principal = READ,
+                   db: Session = Depends(get_db)):
+    """按手机号查询行内收款人（仅返回脱敏户名，限频）。"""
+    ctx = make_ctx(request, db, p)
+    return ok(request, audit.guarded(ctx, "payee_resolve", lambda: payee_svc.resolve_phone(db, p.user, phone)))
+
+
+@router.post("/payees")
+def payees_add(body: PayeeIn, request: Request, p: Principal = PREPARE, db: Session = Depends(get_db)):
+    ctx = make_ctx(request, db, p)
+    return ok(request, audit.guarded(ctx, "payee_add", lambda: payee_svc.add(ctx, p.user, body)))
+
+
+@router.patch("/payees/{payee_id}")
+def payees_update(payee_id: str, body: PayeePatch, request: Request, p: Principal = PREPARE,
+                  db: Session = Depends(get_db)):
+    ctx = make_ctx(request, db, p)
+    return ok(request, audit.guarded(ctx, "payee_update",
+                                     lambda: payee_svc.update_alias(ctx, p.user, payee_id, body.alias)))
+
+
+@router.delete("/payees/{payee_id}")
+def payees_remove(payee_id: str, request: Request, p: Principal = PREPARE, db: Session = Depends(get_db)):
+    ctx = make_ctx(request, db, p)
+    return ok(request, audit.guarded(ctx, "payee_remove", lambda: payee_svc.remove(ctx, p.user, payee_id)))
 
 
 @router.get("/deposit/products")

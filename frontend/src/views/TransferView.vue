@@ -14,7 +14,7 @@ const route = useRoute();
 const router = useRouter();
 const accounts = ref([]);
 const payees = ref([]);
-const form = reactive({ account: "", mode: "saved", payee_id: "", account_no: "", name: "", bank: "LANTAI", amount: "", memo: "" });
+const form = reactive({ account: "", mode: "saved", payee_id: "", account_no: "", phone: "", name: "", bank: "LANTAI", amount: "", memo: "" });
 const errors = reactive({ amount: "", payee: "", server: "" });
 const check = ref(null);
 const busy = ref("");
@@ -37,6 +37,7 @@ const amountOk = computed(() => /^\d{1,12}(\.\d{1,2})?$/.test(form.amount) && Nu
 function body() {
   const base = { from_account_id: form.account, amount: form.amount, memo: form.memo || undefined };
   if (form.mode === "saved") return { ...base, payee_id: form.payee_id };
+  if (form.mode === "phone") return { ...base, payee_phone: form.phone.trim(), payee_name: form.name.trim() };
   return { ...base, payee_account_no: form.account_no.trim(), payee_name: form.name.trim(), bank_code: form.bank };
 }
 
@@ -45,6 +46,7 @@ function validate() {
   if (!amountOk.value) errors.amount = "请输入大于 0 的金额，最多两位小数";
   if (form.mode === "saved" && !form.payee_id) errors.payee = "请选择收款人";
   if (form.mode === "new" && (!form.account_no.trim() || !form.name.trim())) errors.payee = "请填写收款账号与户名";
+  if (form.mode === "phone" && (!/^\d{11}$/.test(form.phone.trim()) || !form.name.trim())) errors.payee = "请填写 11 位手机号与收款人完整户名";
   return !errors.amount && !errors.payee;
 }
 
@@ -75,7 +77,7 @@ async function submit() {
   }
 }
 
-watch(() => [form.account, form.mode, form.payee_id, form.account_no, form.name, form.bank, form.amount], () => { check.value = null; });
+watch(() => [form.account, form.mode, form.payee_id, form.account_no, form.phone, form.name, form.bank, form.amount], () => { check.value = null; });
 
 onMounted(async () => {
   [accounts.value, payees.value] = await Promise.all([api.accounts(), api.payees()]);
@@ -103,6 +105,7 @@ onMounted(async () => {
         <div class="seg" role="group" aria-labelledby="t-mode">
           <button type="button" :aria-pressed="form.mode === 'saved'" @click="form.mode = 'saved'">已保存收款人</button>
           <button type="button" :aria-pressed="form.mode === 'new'" @click="form.mode = 'new'">新收款人</button>
+          <button type="button" :aria-pressed="form.mode === 'phone'" @click="form.mode = 'phone'">手机号</button>
         </div>
       </div>
 
@@ -113,6 +116,10 @@ onMounted(async () => {
           <option v-for="p in payees" :key="p.id" :value="p.id">{{ p.name }} {{ p.account_no_masked }} · {{ p.bank }}</option>
         </select>
       </div>
+      <template v-else-if="form.mode === 'phone'">
+        <div class="field"><label for="t-phone">收款人手机号（澜台用户）</label><input id="t-phone" v-model="form.phone" class="input" :class="{ invalid: errors.payee }" inputmode="numeric" maxlength="11" /></div>
+        <div class="field"><label for="t-pname">收款人完整户名</label><input id="t-pname" v-model="form.name" class="input" :class="{ invalid: errors.payee }" placeholder="用于核验，需与实名一致" /></div>
+      </template>
       <template v-else>
         <div class="field"><label for="t-no">收款账号</label><input id="t-no" v-model="form.account_no" class="input mono" :class="{ invalid: errors.payee }" inputmode="numeric" placeholder="16 位卡号" /></div>
         <div class="field"><label for="t-name">收款人户名</label><input id="t-name" v-model="form.name" class="input" :class="{ invalid: errors.payee }" placeholder="与账户实名一致" /></div>

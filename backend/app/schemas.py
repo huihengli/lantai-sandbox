@@ -17,6 +17,7 @@ class TransferIn(PrepareBase):
     payee_id: str | None = None
     payee_account_no: str | None = None
     payee_name: str | None = None
+    payee_phone: str | None = None  # 行内手机号收款：需同时给出完整户名核验
     bank_code: str | None = None
     bank_name: str | None = None
     amount: str
@@ -58,3 +59,15 @@ class BlacklistIn(BaseModel):
     bank_code: str = "LANTAI"
     reason_code: str = "SCAM_REPORTED"
     source: str = "管理员录入"
+
+
+class PayeeIn(BaseModel):
+    account_no: str
+    name: str
+    bank_code: str = "LANTAI"
+    bank_name: str | None = None
+    alias: str | None = Field(None, max_length=32)
+
+
+class PayeePatch(BaseModel):
+    alias: str | None = Field(None, max_length=32)

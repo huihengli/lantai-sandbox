@@ -47,6 +47,7 @@ class Payee(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     name: Mapped[str] = mapped_column(String(64))
+    alias: Mapped[str | None] = mapped_column(String(32), nullable=True)
     account_no: Mapped[str] = mapped_column(String(32))
     bank_code: Mapped[str] = mapped_column(String(20))
     bank_name: Mapped[str] = mapped_column(String(64))
