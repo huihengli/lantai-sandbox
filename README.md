@@ -110,3 +110,9 @@ curl -s localhost:8001/api/v1/transfers/prepare -H "Authorization: Bearer $AGENT
 | `CROSS_BANK_FEE` | 转王五 5,000（手续费 5.00） |
 | `PAYEE_NAME_MISMATCH` | 向 `6217000040003456` 转账但户名写“张山” |
 | `EARLY_WITHDRAW_LOSS` | 对 `hld_001` 发起提前支取 |
+
+## 能力清单（按模块，对应 `澜台基础能力边界.md`）
+
+| 模块 | 接口 | 说明 |
+|---|---|---|
+| 1 流水增强 | `GET /api/v1/accounts/{id}/transactions?keyword=&counterparty=&merchant_category=` | 备注/对方关键词、商户品类检索；种子含 14 个月历史、周期性扣款、异常交易 |

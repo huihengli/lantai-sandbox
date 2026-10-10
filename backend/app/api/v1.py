@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, Request
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app import clock, config
@@ -75,7 +75,10 @@ def _parse_dt(value: str | None, end_of_day: bool = False) -> datetime | None:
 def transactions(account_id: str, request: Request, p: Principal = READ, db: Session = Depends(get_db),
                  from_: str | None = Query(None, alias="from"), to: str | None = None,
                  direction: str | None = Query(None, pattern="^(in|out)$"), category: str | None = None,
-                 min_amount: str | None = None, limit: int = Query(20, ge=1, le=100), cursor: int = Query(0, ge=0)):
+                 min_amount: str | None = None, keyword: str | None = Query(None, max_length=50),
+                 counterparty: str | None = Query(None, max_length=50),
+                 merchant_category: str | None = Query(None, max_length=20),
+                 limit: int = Query(20, ge=1, le=100), cursor: int = Query(0, ge=0)):
     a = _owned(db, p, account_id)
     stmt = select(Transaction).where(Transaction.account_id == a.id)
     if (start := _parse_dt(from_)):
@@ -88,12 +91,19 @@ def transactions(account_id: str, request: Request, p: Principal = READ, db: Ses
         stmt = stmt.where(Transaction.category == category)
     if min_amount:
         stmt = stmt.where(Transaction.amount_cents >= parse_amount(min_amount))
+    if keyword:  # 备注或对方名称包含关键词
+        like = f"%{keyword}%"
+        stmt = stmt.where(or_(Transaction.memo.ilike(like), Transaction.counterparty_name.ilike(like)))
+    if counterparty:
+        stmt = stmt.where(Transaction.counterparty_name.ilike(f"%{counterparty}%"))
+    if merchant_category:
+        stmt = stmt.where(Transaction.merchant_category == merchant_category)
     rows = db.scalars(stmt.order_by(Transaction.occurred_at.desc(), Transaction.id.desc())
                       .offset(cursor).limit(limit + 1)).all()
     items = [{"id": t.id, "direction": t.direction, "category": t.category, "amount": fmt(t.amount_cents),
               "fee": fmt(t.fee_cents), "balance_after": fmt(t.balance_after_cents),
               "counterparty": t.counterparty_name, "counterparty_account": t.counterparty_account_masked,
-              "memo": t.memo, "occurred_at": clock.iso(t.occurred_at)} for t in rows[:limit]]
+              "merchant_category": t.merchant_category, "memo": t.memo, "occurred_at": clock.iso(t.occurred_at)} for t in rows[:limit]]
     return ok(request, {"items": items, "next_cursor": cursor + limit if len(rows) > limit else None})
 
 

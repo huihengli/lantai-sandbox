@@ -66,6 +66,7 @@ class Transaction(Base):
     balance_after_cents: Mapped[int] = mapped_column(BigInteger)
     counterparty_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     counterparty_account_masked: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    merchant_category: Mapped[str | None] = mapped_column(String(20), nullable=True)
     memo: Mapped[str | None] = mapped_column(String(200), nullable=True)
     operation_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime)

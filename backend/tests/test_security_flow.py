@@ -169,7 +169,7 @@ def test_transactions_filter_and_pagination(client, lin):
     page = client.get(url, params={"limit": 10}, headers=lin.agent).json()["data"]
     assert len(page["items"]) == 10 and page["next_cursor"] == 10
     outs = client.get(url, params={"direction": "in", "limit": 50}, headers=lin.agent).json()["data"]["items"]
-    assert {t["direction"] for t in outs} == {"in"} and len(outs) == 2
+    assert {t["direction"] for t in outs} == {"in"} and len(outs) == 14  # 14 个月工资
     big = client.get(url, params={"min_amount": "1000.00", "limit": 50}, headers=lin.agent).json()["data"]["items"]
     assert big and all(float(t["amount"]) >= 1000 for t in big)
 

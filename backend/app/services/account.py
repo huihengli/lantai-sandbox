@@ -50,11 +50,12 @@ def credit(db: Session, acc: Account, cents: int) -> None:
 
 def add_txn(db: Session, acc: Account, direction: str, category: str, amount: int, now: datetime,
             fee: int = 0, counterparty: str | None = None, counterparty_masked: str | None = None,
-            memo: str | None = None, operation_id: str | None = None) -> Transaction:
+            memo: str | None = None, operation_id: str | None = None,
+            merchant_category: str | None = None) -> Transaction:
     txn = Transaction(
         id=new_id("txn"), account_id=acc.id, direction=direction, category=category,
         amount_cents=amount, fee_cents=fee, balance_after_cents=acc.balance_cents,
         counterparty_name=counterparty, counterparty_account_masked=counterparty_masked,
-        memo=memo, operation_id=operation_id, occurred_at=now)
+        merchant_category=merchant_category, memo=memo, operation_id=operation_id, occurred_at=now)
     db.add(txn)
     return txn

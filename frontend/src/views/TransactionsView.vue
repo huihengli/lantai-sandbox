@@ -9,7 +9,8 @@ const items = ref([]);
 const nextCursor = ref(null);
 const loading = ref(false);
 const error = ref("");
-const f = reactive({ account: "", direction: "", category: "", min_amount: "", from: "", to: "" });
+const f = reactive({ account: "", direction: "", category: "", min_amount: "", keyword: "", merchant_category: "", from: "", to: "" });
+const MCATS = ["餐饮", "交通", "购物", "日用", "医疗", "娱乐", "居住", "生活缴费", "订阅", "还款", "收入"];
 const PAGE = 20;
 
 async function load(reset = true) {
@@ -19,6 +20,7 @@ async function load(reset = true) {
   try {
     const data = await api.transactions(f.account, {
       limit: PAGE, direction: f.direction, category: f.category, min_amount: f.min_amount || undefined,
+      keyword: f.keyword.trim() || undefined, merchant_category: f.merchant_category,
       from: f.from, to: f.to, cursor: reset ? 0 : nextCursor.value,
     });
     items.value = reset ? data.items : items.value.concat(data.items);
@@ -34,9 +36,9 @@ onMounted(async () => {
   accounts.value = await api.accounts();
   f.account = accounts.value[0]?.id || "";
 });
-watch(() => [f.account, f.direction, f.category, f.from, f.to], () => load(true));
+watch(() => [f.account, f.direction, f.category, f.merchant_category, f.from, f.to], () => load(true));
 let t;
-watch(() => f.min_amount, () => { clearTimeout(t); t = setTimeout(() => load(true), 400); });
+watch(() => [f.min_amount, f.keyword], () => { clearTimeout(t); t = setTimeout(() => load(true), 400); });
 </script>
 
 <template>
@@ -51,6 +53,10 @@ watch(() => f.min_amount, () => { clearTimeout(t); t = setTimeout(() => load(tru
       <select id="f-dir" v-model="f.direction" class="select"><option value="">全部</option><option value="in">收入</option><option value="out">支出</option></select></div>
     <div class="field"><label for="f-cat">类别</label>
       <select id="f-cat" v-model="f.category" class="select"><option value="">全部</option><option v-for="(n, k) in CATEGORY" :key="k" :value="k">{{ n }}</option></select></div>
+    <div class="field"><label for="f-mc">商户品类</label>
+      <select id="f-mc" v-model="f.merchant_category" class="select"><option value="">全部</option><option v-for="c in MCATS" :key="c" :value="c">{{ c }}</option></select></div>
+    <div class="field"><label for="f-kw">关键词</label>
+      <input id="f-kw" v-model="f.keyword" class="input" placeholder="备注 / 对方名称" /></div>
     <div class="field"><label for="f-min">最小金额</label>
       <input id="f-min" v-model="f.min_amount" class="input" inputmode="decimal" placeholder="如 1000.00" /></div>
     <div class="field"><label for="f-from">起始日期</label><input id="f-from" v-model="f.from" class="input" type="date" /></div>
@@ -66,7 +72,7 @@ watch(() => f.min_amount, () => { clearTimeout(t); t = setTimeout(() => load(tru
         <tbody>
           <tr v-for="t in items" :key="t.id">
             <td class="num">{{ fmtTime(t.occurred_at) }}</td>
-            <td><span class="tag muted">{{ CATEGORY[t.category] || t.category }}</span></td>
+            <td><span class="tag muted">{{ CATEGORY[t.category] || t.category }}</span><div v-if="t.merchant_category" class="muted memo">{{ t.merchant_category }}</div></td>
             <td>{{ t.counterparty || "—" }}<div v-if="t.memo" class="muted memo">{{ t.memo }}</div></td>
             <td class="num" style="text-align: right" :class="t.direction === 'in' ? 'amount-in' : 'amount-out'">
               {{ t.direction === "in" ? "+" : "-" }}{{ fmtMoney(t.amount) }}<div v-if="Number(t.fee)" class="muted memo">手续费 {{ fmtMoney(t.fee) }}</div>
