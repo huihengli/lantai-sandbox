@@ -18,10 +18,12 @@ const CONTROLS = [["online", "线上支付"], ["overseas", "境外交易"], ["at
 const STATUS_CLS = { active: "ok", frozen: "medium", locked: "high", lost: "blocked" };
 
 async function load() {
-  cards.value = await api.cards();
-  accounts.value = await Promise.all((await api.accounts()).map((a) => api.balance(a.id)));
-  for (const c of cards.value) limitForm[c.id] = { single: c.limits.single, daily: c.limits.daily };
-  for (const a of accounts.value) limitForm[a.id] = { single: a.single_limit, daily: a.daily_limit };
+  // 先准备好表单状态再赋值列表，避免首次渲染时 limitForm 条目尚不存在
+  const [cardList, accountList] = await Promise.all([api.cards(), api.accounts().then((l) => Promise.all(l.map((a) => api.balance(a.id))))]);
+  for (const c of cardList) limitForm[c.id] = { single: c.limits.single, daily: c.limits.daily };
+  for (const a of accountList) limitForm[a.id] = { single: a.single_limit, daily: a.daily_limit };
+  cards.value = cardList;
+  accounts.value = accountList;
 }
 onMounted(load);
 
