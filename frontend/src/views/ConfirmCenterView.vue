@@ -172,6 +172,7 @@ onBeforeUnmount(() => { clearInterval(poll); clearInterval(tick); });
           <div class="panel-title"><PhSealCheck :size="26" weight="fill" aria-hidden="true" /><h3>已完成</h3></div>
           <dl class="kv">
             <template v-if="detail.result.transaction_id"><dt>流水号</dt><dd class="mono">{{ detail.result.transaction_id }}</dd></template>
+            <template v-if="detail.result.order_ref"><dt>订单号</dt><dd class="mono">{{ detail.result.order_ref }}</dd></template>
             <template v-if="detail.result.holding_id"><dt>持有编号</dt><dd class="mono">{{ detail.result.holding_id }}</dd></template>
             <template v-if="detail.result.balance_after"><dt>账户余额</dt><dd class="num">¥ {{ fmtMoney(detail.result.balance_after) }}</dd></template>
             <template v-if="detail.result.card_no_masked"><dt>新卡号</dt><dd class="mono">{{ detail.result.card_no_masked }}</dd></template>

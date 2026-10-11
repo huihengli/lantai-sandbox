@@ -28,6 +28,12 @@ CATALOG: dict[str, tuple[str, str, str]] = {
                        "提醒用户确认是否已在商户侧处理（如房租、信用卡还款需另行安排）"),
     "HOLD_RELEASE": ("low", "将释放预留的 {amount} 元（用途：{purpose}），释放后这笔资金可被转出或支付",
                      "确认用户是有意提前动用这笔预留，而非被诱导"),
+    "CARD_NOT_USABLE": ("blocked", "卡片当前为{status}，无法支付", "引导用户先处理卡片状态（解冻/补发），不要换卡重试以绕过风控"),
+    "CONTROL_DISABLED": ("blocked", "该卡片的「{name}」开关已关闭，无法完成本次支付", "如确需支付，可引导用户在确认中心打开对应开关（需验证）"),
+    "CARD_LIMIT_EXCEEDED": ("blocked", "超过卡片额度：单笔 {single} 元 / 单日 {daily} 元（今日已用 {used} 元）", "告知额度，建议分日或提额（需验证）"),
+    "MERCHANT_RISKY": ("blocked", "该商户已被列入风险名单，支付被拦截", "提醒用户核实商户身份，谨防返利、刷单类诈骗"),
+    "NEW_MERCHANT": ("medium", "首次向该商户支付", "提醒用户核实商户与订单"),
+    "OVERSEAS_PAYMENT": ("medium", "该商户位于境外", "确认用户知晓境外交易的汇率与风险"),
     "EARLY_WITHDRAW_LOSS": ("low", "提前支取将损失利息 {loss} 元（到期可得 {full} 元，现仅 {early} 元）",
                             "对比到期日期，建议用户权衡"),
 }

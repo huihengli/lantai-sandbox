@@ -47,7 +47,7 @@ def payee_name_mismatch(c: RiskContext) -> list[dict]:
     return [reason("PAYEE_NAME_MISMATCH")] if c.name_mismatch else []
 
 
-@rule("transfer", "deposit_create")
+@rule("transfer", "deposit_create", "merchant_payment")
 def large_amount(c: RiskContext) -> list[dict]:
     if c.amount_cents >= config.LARGE_AMOUNT_CENTS:
         return [reason("LARGE_AMOUNT", threshold=fmt(config.LARGE_AMOUNT_CENTS))]
@@ -69,14 +69,14 @@ def rapid_repeat(c: RiskContext) -> list[dict]:
     return []
 
 
-@rule("transfer")
+@rule("transfer", "merchant_payment")
 def night(c: RiskContext) -> list[dict]:
     if config.NIGHT_START_HOUR <= c.local_now.hour < config.NIGHT_END_HOUR:
         return [reason("NIGHT_TRANSACTION")]
     return []
 
 
-@rule("transfer", "deposit_create")
+@rule("transfer", "deposit_create", "merchant_payment")
 def autopay_at_risk(c: RiskContext) -> list[dict]:
     due = sum(a for _, a, _ in c.autopays)
     if due and c.account.balance_cents - c.held_cents - c.amount_cents - c.fee_cents < due:
@@ -129,6 +129,28 @@ def mandate_cancel(c: RiskContext) -> list[dict]:
 @rule("hold_release")
 def hold_release(c: RiskContext) -> list[dict]:
     return [reason("HOLD_RELEASE", amount=c.change["amount"], purpose=c.change["purpose"])]
+
+
+@rule("merchant_payment")
+def merchant_payment(c: RiskContext) -> list[dict]:
+    card, m = c.change["card"], c.change["merchant"]
+    out: list[dict] = []
+    if card["status"] != "active":
+        out.append(reason("CARD_NOT_USABLE", status=card["status_text"]))
+    if c.change["channel"] == "online" and not card["online"]:
+        out.append(reason("CONTROL_DISABLED", name="线上支付"))
+    if m["overseas"] and not card["overseas"]:
+        out.append(reason("CONTROL_DISABLED", name="境外交易"))
+    used = c.change["card_today_cents"]
+    if c.amount_cents > card["single"] or used + c.amount_cents > card["daily"]:
+        out.append(reason("CARD_LIMIT_EXCEEDED", single=fmt(card["single"]), daily=fmt(card["daily"]), used=fmt(used)))
+    if m["status"] == "risky":
+        out.append(reason("MERCHANT_RISKY"))
+    if m["overseas"]:
+        out.append(reason("OVERSEAS_PAYMENT"))
+    if c.change["first_time"]:
+        out.append(reason("NEW_MERCHANT"))
+    return out
 
 
 @rule("deposit_early_withdraw")

@@ -12,11 +12,11 @@ from app.errors import LantaiError
 from app.models import (Account, DepositHolding, DepositProduct, Payee, Transaction)
 from app.money import fmt, mask, parse_amount
 from app.schemas import (AccountLimitsIn, CardApplyIn, CardControlsIn, CardLimitsIn, CardOnlyIn, DepositIn,
-                         EarlyWithdrawIn, HoldIn, HoldReleaseIn, MandateCancelIn, PayeeIn, PayeePatch,
+                         EarlyWithdrawIn, HoldIn, HoldReleaseIn, MandateCancelIn, MerchantPayIn, PayeeIn, PayeePatch,
                          TransferIn)
 from app.security.auth import Principal, make_ctx, require
 from app.services import account as acct
-from app.services import audit, cards as card_svc, deposit, holds as hold_svc, mandates as mandate_svc, operation, transfer
+from app.services import audit, cards as card_svc, deposit, holds as hold_svc, mandates as mandate_svc, operation, payments, transfer
 from app.services import payees as payee_svc
 
 router = APIRouter(prefix="/api/v1", tags=["agent"])
@@ -345,3 +345,16 @@ def holds_release_prepare(hold_id: str, request: Request, body: HoldReleaseIn | 
     body = body or HoldReleaseIn()
     body.hold_id = hold_id
     return _prepare(request, db, p, "hold_release", body)
+
+
+# ---------------- 商户支付 ----------------
+@router.get("/merchants")
+def merchants_list(request: Request, p: Principal = READ, db: Session = Depends(get_db)):
+    """商户目录（演示：鲜花、蛋糕、会员、超市、境外礼品）。"""
+    return ok(request, [payments.merchant_view(m) for m in payments.list_merchants(db)])
+
+
+@router.post("/payments/merchant/prepare")
+def merchant_pay_prepare(body: MerchantPayIn, request: Request, p: Principal = PREPARE, db: Session = Depends(get_db)):
+    """用借记卡向商户付款：受卡片状态/开关/额度、商户风险与可用余额约束，需用户确认。"""
+    return _prepare(request, db, p, "merchant_payment", body)

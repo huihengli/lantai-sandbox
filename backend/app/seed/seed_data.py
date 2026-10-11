@@ -8,8 +8,8 @@ import random
 from datetime import timedelta
 
 from app import clock, config, db
-from app.models import (Account, AutopayPlan, Blacklist, Card, DepositHolding, DepositProduct, Payee,
-                        Transaction, User)
+from app.models import (Account, AutopayPlan, Blacklist, Card, DepositHolding, DepositProduct, Merchant,
+                        Payee, Transaction, User)
 from app.money import new_id
 from app.security.auth import hash_password
 from app.services.deposit import add_months
@@ -140,6 +140,14 @@ def seed() -> None:
                        online_enabled=True, overseas_enabled=False, atm_enabled=True,
                        single_limit_cents=config.CARD_DEFAULT_SINGLE_CENTS,
                        daily_limit_cents=config.CARD_DEFAULT_DAILY_CENTS, created_at=now - timedelta(days=400)))
+        s.add_all([
+            Merchant(id="mch_flower", name="澜花坊", category="礼品", description="鲜花同城配送"),
+            Merchant(id="mch_cake", name="甜时光蛋糕", category="餐饮", description="定制蛋糕"),
+            Merchant(id="mch_video", name="澜视频会员", category="订阅", description="视频会员"),
+            Merchant(id="mch_mart", name="澜选超市", category="日用", description="线上超市"),
+            Merchant(id="mch_global", name="GLOBAL GIFTS LTD", category="购物", overseas=True, description="境外礼品商城"),
+            Merchant(id="mch_risky", name="极速返利商城", category="购物", status="risky", description="（风险商户，不在目录中）"),
+        ])
         s.flush()
         _history(s, now)
         s.commit()

@@ -68,6 +68,7 @@ class Transaction(Base):
     counterparty_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     counterparty_account_masked: Mapped[str | None] = mapped_column(String(32), nullable=True)
     merchant_category: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    card_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     memo: Mapped[str | None] = mapped_column(String(200), nullable=True)
     operation_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime)
@@ -232,3 +233,13 @@ class Hold(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime)
     released_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_by: Mapped[str] = mapped_column(String(10), default="user")
+
+
+class Merchant(Base):
+    __tablename__ = "merchants"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    name: Mapped[str] = mapped_column(String(64))
+    category: Mapped[str] = mapped_column(String(20))
+    overseas: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String(10), default="active")  # active / risky（风险商户不在目录中，但可被支付请求命中并拦截）
+    description: Mapped[str | None] = mapped_column(String(100), nullable=True)

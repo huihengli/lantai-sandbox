@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -112,3 +114,11 @@ class HoldIn(BaseModel):
 
 class HoldReleaseIn(PrepareBase):
     hold_id: str | None = None  # 由路径参数填充
+
+
+class MerchantPayIn(PrepareBase):
+    card_id: str
+    merchant_id: str
+    amount: str
+    order_ref: str = Field(..., min_length=1, max_length=60)  # 订单号：同一商户同一订单号只能支付一次
+    channel: Literal["online", "offline"] = "online"
