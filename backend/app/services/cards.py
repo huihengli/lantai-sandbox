@@ -15,7 +15,7 @@ from app.models import Account, Card, User
 from app.money import fmt, mask, new_id, parse_amount
 from app.risk import engine
 from app.services import account as acct
-from app.services import audit
+from app.services import audit, events
 from app.services.plan import Plan
 
 CONTROLS = {"online": "线上支付", "overseas": "境外交易", "atm": "ATM 取现"}
@@ -49,6 +49,10 @@ def _set_status(c: Card, status: str) -> None:
     c.status_changed_at = clock.now()
 
 
+def _note(db: Session, c: Card, change: str) -> None:
+    events.emit(db, c.user_id, "card", c.id, {"card_id": c.id, "change": change, "status": c.status})
+
+
 def _new_card_no(db: Session) -> str:
     while True:
         no = "621790" + "".join(str(secrets.randbelow(10)) for _ in range(10))
@@ -64,6 +68,7 @@ def freeze(ctx: audit.Ctx, user: User, card_id: str) -> dict:
     if c.status != "active":
         raise LantaiError("CARD_STATE_INVALID", f"卡片当前为{STATUS_TEXT[c.status]}，无法冻结")
     _set_status(c, "frozen")
+    _note(ctx.db, c, "frozen")
     audit.log(ctx, "card_freeze", detail={"card_id": c.id})
     return {"card": view(c), "changed": True}
 
@@ -73,6 +78,7 @@ def report_loss(ctx: audit.Ctx, user: User, card_id: str) -> dict:
     if c.status == "lost":
         return {"card": view(c), "changed": False}
     _set_status(c, "lost")
+    _note(ctx.db, c, "lost")
     audit.log(ctx, "card_report_loss", detail={"card_id": c.id})
     return {"card": view(c), "changed": True}
 
@@ -92,6 +98,7 @@ def tighten_controls(ctx: audit.Ctx, user: User, card_id: str, changes: dict) ->
     for k in changed:
         setattr(c, f"{k}_enabled", False)
     if changed:
+        _note(ctx.db, c, "controls")
         audit.log(ctx, "card_controls_tighten", detail={"card_id": c.id, "closed": changed})
     return {"card": view(c), "changed": bool(changed)}
 
@@ -106,6 +113,7 @@ def lower_limits(ctx: audit.Ctx, user: User, card_id: str, single: int | None, d
     changed = (new_single, new_daily) != (c.single_limit_cents, c.daily_limit_cents)
     c.single_limit_cents, c.daily_limit_cents = new_single, new_daily
     if changed:
+        _note(ctx.db, c, "limits")
         audit.log(ctx, "card_limits_lower", detail={"card_id": c.id, "single": fmt(new_single), "daily": fmt(new_daily)})
     return {"card": view(c), "changed": changed}
 
@@ -119,6 +127,7 @@ def lower_account_limits(ctx: audit.Ctx, user: User, account_id: str, single: in
     changed = (new_single, new_daily) != (a.single_limit_cents, a.daily_limit_cents)
     a.single_limit_cents, a.daily_limit_cents = new_single, new_daily
     if changed:
+        events.emit(ctx.db, a.user_id, "account", a.id, {"account_id": a.id, "change": "limits"})
         audit.log(ctx, "account_limits_lower", detail={"account_id": a.id, "single": fmt(new_single), "daily": fmt(new_daily)})
     return {"account_id": a.id, "limits": {"single": fmt(a.single_limit_cents), "daily": fmt(a.daily_limit_cents)},
             "changed": changed}
@@ -173,6 +182,7 @@ def build_apply_plan(db: Session, user: User, params: dict, now, lock: bool = Fa
 def execute_apply(db: Session, op, plan: Plan, now) -> dict:
     acc = plan.data["account"]
     c = _create_card(db, acc, now)
+    _note(db, c, "issued")
     return {"card_id": c.id, "card_no_masked": mask(c.card_no), "executed_at": clock.iso(now)}
 
 
@@ -208,6 +218,7 @@ def build_unfreeze_plan(db: Session, user: User, params: dict, now, lock: bool =
 def execute_unfreeze(db: Session, op, plan: Plan, now) -> dict:
     c = plan.data["card"]
     _set_status(c, "active")
+    _note(db, c, "unfrozen")
     return {"card_id": c.id, "status": c.status, "executed_at": clock.iso(now)}
 
 
@@ -226,6 +237,7 @@ def execute_reissue(db: Session, op, plan: Plan, now) -> dict:
     acc = db.get(Account, old.account_id)
     new = _create_card(db, acc, now, like=old)
     old.replaced_by = new.id
+    _note(db, new, "issued")
     return {"card_id": new.id, "card_no_masked": mask(new.card_no), "executed_at": clock.iso(now)}
 
 
@@ -251,6 +263,7 @@ def execute_controls(db: Session, op, plan: Plan, now) -> dict:
     c = plan.data["card"]
     for k, v in plan.data["diff"].items():
         setattr(c, f"{k}_enabled", v)
+    _note(db, c, "controls")
     return {"card": view(c), "executed_at": clock.iso(now)}
 
 
@@ -278,6 +291,7 @@ def build_card_limits_plan(db: Session, user: User, params: dict, now, lock: boo
 def execute_card_limits(db: Session, op, plan: Plan, now) -> dict:
     c = plan.data["card"]
     c.single_limit_cents, c.daily_limit_cents = plan.data["new"]
+    _note(db, c, "limits")
     return {"card": view(c), "executed_at": clock.iso(now)}
 
 
@@ -294,5 +308,6 @@ def build_account_limits_plan(db: Session, user: User, params: dict, now, lock: 
 def execute_account_limits(db: Session, op, plan: Plan, now) -> dict:
     a = plan.data["account"]
     a.single_limit_cents, a.daily_limit_cents = plan.data["new"]
+    events.emit(db, a.user_id, "account", a.id, {"account_id": a.id, "change": "limits"})
     return {"account_id": a.id, "limits": {"single": fmt(a.single_limit_cents), "daily": fmt(a.daily_limit_cents)},
             "executed_at": clock.iso(now)}

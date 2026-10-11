@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app import clock
 from app.errors import LantaiError
+from app.services import events
 from app.models import Account, Hold, Transaction
 from app.money import new_id
 
@@ -72,4 +73,9 @@ def add_txn(db: Session, acc: Account, direction: str, category: str, amount: in
         counterparty_name=counterparty, counterparty_account_masked=counterparty_masked,
         merchant_category=merchant_category, card_id=card_id, memo=memo, operation_id=operation_id, occurred_at=now)
     db.add(txn)
+    db.flush()
+    events.emit(db, acc.user_id, "txn_in" if direction == "in" else "txn_out", txn.id, {
+        "account_id": acc.id, "category": category, "amount": f"{amount // 100}.{amount % 100:02d}",
+        "counterparty": counterparty, "memo": memo, "merchant_category": merchant_category,
+        "balance_after": f"{acc.balance_cents // 100}.{acc.balance_cents % 100:02d}", "operation_id": operation_id})
     return txn

@@ -14,7 +14,7 @@ from app.models import Account, Hold, User
 from app.money import fmt, mask, new_id, parse_amount
 from app.risk import engine
 from app.services import account as acct
-from app.services import audit
+from app.services import audit, events
 from app.services.plan import Plan
 
 
@@ -29,6 +29,7 @@ def expire_due(db: Session, account_id: str) -> None:
     for h in db.scalars(select(Hold).where(Hold.account_id == account_id, Hold.status == "active",
                                            Hold.expires_at.is_not(None), Hold.expires_at <= now)):
         h.status = "expired"
+        events.emit(db, h.user_id, "hold", h.id, {"hold_id": h.id, "status": "expired", "amount": fmt(h.amount_cents)})
     db.flush()
 
 
@@ -79,6 +80,7 @@ def create(ctx: audit.Ctx, user: User, account_id: str, body) -> dict:
              created_at=clock.now(), created_by=ctx.actor)
     db.add(h)
     db.flush()
+    events.emit(db, user.id, "hold", h.id, {"hold_id": h.id, "status": "active", "amount": fmt(cents), "purpose": h.purpose})
     audit.log(ctx, "hold_create", detail={"hold_id": h.id, "amount": fmt(cents), "purpose": h.purpose})
     return {"hold": view(h), "available_after": fmt(avail - cents)}
 
@@ -107,4 +109,5 @@ def build_release_plan(db: Session, user: User, params: dict, now, lock: bool = 
 def execute_release(db: Session, op, plan: Plan, now) -> dict:
     h = plan.data["hold"]
     h.status, h.released_at = "released", now
+    events.emit(db, h.user_id, "hold", h.id, {"hold_id": h.id, "status": "released", "amount": fmt(h.amount_cents)})
     return {"hold_id": h.id, "status": h.status, "executed_at": clock.iso(now)}

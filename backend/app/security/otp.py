@@ -10,7 +10,7 @@ from app import clock, config
 from app.errors import LantaiError
 from app.models import OtpChallenge, PendingOperation
 from app.money import new_id
-from app.services import audit
+from app.services import audit, events
 
 
 def _hash(op_id: str, code: str) -> str:
@@ -46,6 +46,7 @@ def verify(ctx: audit.Ctx, op: PendingOperation, code: str) -> None:
     if _hash(op.id, code) == ch.code_hash:
         ch.status = "verified"
         op.status = "OTP_VERIFIED"
+        events.emit(db, op.user_id, "operation", op.id, {"operation_id": op.id, "op_type": op.type, "status": op.status})
         audit.log(ctx, "otp_verify", operation_id=op.id)
         return
     ch.attempts += 1
@@ -53,6 +54,7 @@ def verify(ctx: audit.Ctx, op: PendingOperation, code: str) -> None:
     if left <= 0:
         ch.status = "locked"
         op.status = "OTP_LOCKED"
+        events.emit(db, op.user_id, "operation", op.id, {"operation_id": op.id, "op_type": op.type, "status": op.status})
     db.commit()  # 错误次数必须落库，不能随异常回滚（拒绝记录由 guarded 写入审计）
     if left <= 0:
         raise LantaiError("OTP_LOCKED", "OTP 错误次数过多，操作已锁定，请重新发起")

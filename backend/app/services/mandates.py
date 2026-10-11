@@ -11,7 +11,7 @@ from app.models import Account, AutopayPlan, User
 from app.money import fmt, mask
 from app.risk import engine
 from app.services import account as acct
-from app.services import audit
+from app.services import audit, events
 from app.services.plan import Plan
 
 CYCLE_TEXT = {"monthly": "每月", "yearly": "每年", "weekly": "每周"}
@@ -58,6 +58,8 @@ def build_cancel_plan(db: Session, user: User, params: dict, now, lock: bool = F
 def execute_cancel(db: Session, op, plan: Plan, now) -> dict:
     m = plan.data["mandate"]
     m.status, m.cancelled_at = "cancelled", now
+    events.emit(db, db.get(Account, m.account_id).user_id, "mandate", m.id,
+                {"mandate_id": m.id, "merchant": m.merchant, "status": m.status})
     return {"mandate_id": m.id, "merchant": m.merchant, "status": m.status, "executed_at": clock.iso(now)}
 
 

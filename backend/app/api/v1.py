@@ -16,7 +16,7 @@ from app.schemas import (AccountLimitsIn, CardApplyIn, CardControlsIn, CardLimit
                          TransferIn)
 from app.security.auth import Principal, make_ctx, require
 from app.services import account as acct
-from app.services import audit, cards as card_svc, deposit, holds as hold_svc, mandates as mandate_svc, operation, payments, transfer
+from app.services import audit, cards as card_svc, events as event_svc, deposit, holds as hold_svc, mandates as mandate_svc, operation, payments, transfer
 from app.services import payees as payee_svc
 
 router = APIRouter(prefix="/api/v1", tags=["agent"])
@@ -358,3 +358,12 @@ def merchants_list(request: Request, p: Principal = READ, db: Session = Depends(
 def merchant_pay_prepare(body: MerchantPayIn, request: Request, p: Principal = PREPARE, db: Session = Depends(get_db)):
     """用借记卡向商户付款：受卡片状态/开关/额度、商户风险与可用余额约束，需用户确认。"""
     return _prepare(request, db, p, "merchant_payment", body)
+
+
+# ---------------- 事件流 ----------------
+@router.get("/events")
+def events_feed(request: Request, after_id: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=200),
+                types: str | None = Query(None, description="逗号分隔：txn_in,txn_out,operation,card,account,mandate,hold"),
+                p: Principal = READ, db: Session = Depends(get_db)):
+    """递增事件流（只读）。Agent 记住 next_after_id，轮询即可做提醒、对账与定时触发。"""
+    return ok(request, event_svc.fetch(db, p.user.id, after_id, limit, types.split(",") if types else None))

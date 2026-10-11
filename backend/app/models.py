@@ -243,3 +243,14 @@ class Merchant(Base):
     overseas: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[str] = mapped_column(String(10), default="active")  # active / risky（风险商户不在目录中，但可被支付请求命中并拦截）
     description: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+
+class Event(Base):
+    __tablename__ = "events"
+    __table_args__ = (Index("idx_event_user_id", "user_id", "id"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[datetime] = mapped_column(DateTime)
+    user_id: Mapped[str] = mapped_column(String(32))
+    type: Mapped[str] = mapped_column(String(20))
+    ref_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    data_json: Mapped[str] = mapped_column(Text)

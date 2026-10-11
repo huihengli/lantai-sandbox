@@ -11,7 +11,7 @@ from app.errors import LantaiError
 from app.models import PendingOperation, User
 from app.money import new_id
 from app.security import otp
-from app.services import audit, cards, deposit, holds, idempotency, mandates, payments, transfer
+from app.services import audit, cards, events, deposit, holds, idempotency, mandates, payments, transfer
 
 ACTIVE = {"PREPARED", "OTP_PENDING", "OTP_VERIFIED"}
 
@@ -56,6 +56,10 @@ def view(op: PendingOperation) -> dict:
     return out
 
 
+def emit_status(db: Session, op: PendingOperation) -> None:
+    events.emit(db, op.user_id, "operation", op.id, {"operation_id": op.id, "op_type": op.type, "status": op.status})
+
+
 def get_op(db: Session, user_id: str, op_id: str) -> PendingOperation:
     op = db.get(PendingOperation, op_id)
     if op is None or op.user_id != user_id:
@@ -67,6 +71,7 @@ def get_op(db: Session, user_id: str, op_id: str) -> PendingOperation:
 def expire_if_needed(db: Session, op: PendingOperation) -> None:
     if op.status in ACTIVE and op.expires_at <= clock.now():
         op.status = "EXPIRED"
+        emit_status(db, op)
         db.commit()  # 惰性过期：先落库，再由调用方决定是否报错
 
 
@@ -104,6 +109,7 @@ def prepare(ctx: audit.Ctx, user: User, op_type: str, body, idem_key: str | None
     db.flush()
     if status == "OTP_PENDING":
         otp.issue(db, op)
+    emit_status(db, op)
     audit.log(ctx, f"prepare:{op_type}", "blocked" if status == "BLOCKED" else "ok", op.id, risk,
               detail={"summary": plan.summary})
     out = view(op)
@@ -116,6 +122,7 @@ def _fail(db: Session, op_id: str, exc: LantaiError) -> None:
     op = db.get(PendingOperation, op_id)
     op.status = "FAILED"
     op.result_json = json.dumps({"error": exc.code, "message": exc.message}, ensure_ascii=False)
+    emit_status(db, op)
     db.commit()
 
 
@@ -146,12 +153,14 @@ def confirm(ctx: audit.Ctx, user: User, op_id: str) -> dict:
     op.risk_json, op.risk_level, op.required_action = json.dumps(risk, ensure_ascii=False), risk["level"], risk["required_action"]
     if risk["required_action"] == "block":
         op.status = "BLOCKED"
+        emit_status(db, op)
         db.commit()
         raise LantaiError("RISK_BLOCKED", "确认时风控复核未通过", {"reasons": risk["reasons"]})
     if risk["required_action"] == "otp" and op.status != "OTP_VERIFIED":
         if op.status != "OTP_PENDING":
             op.status = "OTP_PENDING"
             otp.issue(db, op)
+            emit_status(db, op)
         db.commit()
         raise LantaiError("OTP_REQUIRED", "该操作需要先通过 OTP 验证")
 
@@ -161,6 +170,7 @@ def confirm(ctx: audit.Ctx, user: User, op_id: str) -> dict:
         _fail(db, op_id, exc)
         raise
     op.status, op.confirmed_at, op.executed_at = "EXECUTED", now, now
+    emit_status(db, op)
     op.result_json = json.dumps(result, ensure_ascii=False)
     audit.log(ctx, f"confirm:{op.type}", operation_id=op.id, risk=risk, detail=result)
     return view(op)
@@ -196,5 +206,6 @@ def cancel(ctx: audit.Ctx, user: User, op_id: str, action: str) -> dict:
     if op.status not in ACTIVE:
         raise LantaiError("OPERATION_STATE_INVALID", f"当前状态 {op.status} 不可取消")
     op.status = "CANCELLED"
+    emit_status(ctx.db, op)
     audit.log(ctx, action, operation_id=op.id)
     return view(op)

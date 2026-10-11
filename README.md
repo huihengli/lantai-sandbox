@@ -121,3 +121,4 @@ curl -s localhost:8001/api/v1/transfers/prepare -H "Authorization: Bearer $AGENT
 | 4 代扣协议 | `GET /api/v1/mandates?status=`、`POST /api/v1/mandates/{id}/cancel/prepare` | 协议列表（商户、金额、周期、下次扣款日）与取消（需确认）；订阅识别/续费提醒归 Agent；演示用 `POST /admin/mandates/{id}/charge` 模拟商户扣款 |
 | 5 资金预留 | `GET/POST /api/v1/accounts/{id}/holds`（创建需 `protect`，直接生效）、`POST /api/v1/holds/{id}/release/prepare` | 预留（锁定）一笔资金，不可转出/存入定期/代扣；余额接口新增 `held` 与 `available`；到期惰性失效；释放需用户确认 |
 | 6 商户支付 | `GET /api/v1/merchants`、`POST /api/v1/payments/merchant/prepare`（card_id、merchant_id、amount、order_ref、channel） | 受卡片状态/开关/额度、商户风险（含风险商户拦截）、首次商户与境外 OTP、可用余额约束；订单号防重复支付；确认时复核 |
+| 7 事件流 | `GET /api/v1/events?after_id=&limit=&types=` | 递增只读事件流（入账/扣款 `txn_in/txn_out`、操作状态 `operation`、`card`、`account`、`mandate`、`hold`），按用户隔离；Agent 记住 `next_after_id` 轮询即可做提醒、对账与定时触发 |
