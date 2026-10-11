@@ -47,7 +47,7 @@ def payee_name_mismatch(c: RiskContext) -> list[dict]:
     return [reason("PAYEE_NAME_MISMATCH")] if c.name_mismatch else []
 
 
-@rule("transfer", "deposit_create", "merchant_payment")
+@rule("transfer", "deposit_create", "merchant_payment", "wealth_subscribe")
 def large_amount(c: RiskContext) -> list[dict]:
     if c.amount_cents >= config.LARGE_AMOUNT_CENTS:
         return [reason("LARGE_AMOUNT", threshold=fmt(config.LARGE_AMOUNT_CENTS))]
@@ -76,7 +76,7 @@ def night(c: RiskContext) -> list[dict]:
     return []
 
 
-@rule("transfer", "deposit_create", "merchant_payment")
+@rule("transfer", "deposit_create", "merchant_payment", "wealth_subscribe")
 def autopay_at_risk(c: RiskContext) -> list[dict]:
     due = sum(a for _, a, _ in c.autopays)
     if due and c.account.balance_cents - c.held_cents - c.amount_cents - c.fee_cents < due:
@@ -151,6 +151,29 @@ def merchant_payment(c: RiskContext) -> list[dict]:
     if c.change["first_time"]:
         out.append(reason("NEW_MERCHANT"))
     return out
+
+
+@rule("wealth_subscribe")
+def wealth_subscribe(c: RiskContext) -> list[dict]:
+    ch, prod = c.change, c.change["product"]
+    out: list[dict] = []
+    if ch["user_level"] is None:
+        out.append(reason("RISK_PROFILE_MISSING", status="尚未完成风险测评" if ch["level_status"] == "none" else "风险测评已过期（有效期 12 个月）"))
+    else:
+        gap = prod["risk_level"] - ch["user_level"]
+        names = dict(product=f"R{prod['risk_level']}", user=f"R{ch['user_level']}（{ch['user_label']}）")
+        if gap >= 2:
+            out.append(reason("RISK_LEVEL_FORBIDDEN", **names))
+        elif gap == 1:
+            out.append(reason("RISK_LEVEL_MISMATCH", **names))
+    if prod["risk_level"] >= 2:
+        out.append(reason("NAV_RISK_NOTICE"))
+    return out
+
+
+@rule("wealth_redeem")
+def wealth_redeem(c: RiskContext) -> list[dict]:
+    return [reason("REDEEM_LOSS", loss=c.change["pnl"])] if c.change.get("pnl") else []
 
 
 @rule("deposit_early_withdraw")

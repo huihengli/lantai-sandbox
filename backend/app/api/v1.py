@@ -11,12 +11,12 @@ from app.db import get_db
 from app.errors import LantaiError
 from app.models import (Account, DepositHolding, DepositProduct, Payee, Transaction)
 from app.money import fmt, mask, parse_amount
-from app.schemas import (AccountLimitsIn, CardApplyIn, CardControlsIn, CardLimitsIn, CardOnlyIn, DepositIn,
+from app.schemas import (AccountLimitsIn, WealthRedeemIn, WealthSubscribeIn, CardApplyIn, CardControlsIn, CardLimitsIn, CardOnlyIn, DepositIn,
                          EarlyWithdrawIn, HoldIn, HoldReleaseIn, MandateCancelIn, MerchantPayIn, PayeeIn, PayeePatch,
                          TransferIn)
 from app.security.auth import Principal, make_ctx, require
 from app.services import account as acct
-from app.services import audit, cards as card_svc, events as event_svc, deposit, holds as hold_svc, mandates as mandate_svc, operation, payments, transfer
+from app.services import audit, cards as card_svc, events as event_svc, deposit, holds as hold_svc, mandates as mandate_svc, operation, payments, risk_profile, transfer, wealth
 from app.services import payees as payee_svc
 
 router = APIRouter(prefix="/api/v1", tags=["agent"])
@@ -367,3 +367,38 @@ def events_feed(request: Request, after_id: int = Query(0, ge=0), limit: int = Q
                 p: Principal = READ, db: Session = Depends(get_db)):
     """递增事件流（只读）。Agent 记住 next_after_id，轮询即可做提醒、对账与定时触发。"""
     return ok(request, event_svc.fetch(db, p.user.id, after_id, limit, types.split(",") if types else None))
+
+
+# ---------------- 风险测评与理财 ----------------
+@router.get("/risk-profile")
+def risk_profile_get(request: Request, p: Principal = READ):
+    """客户风险测评结果与有效性。提交测评只能由用户在界面通道（PUT /ui/risk-profile）完成。"""
+    return ok(request, risk_profile.view(p.user, clock.now()))
+
+
+@router.get("/risk-profile/questionnaire")
+def risk_questionnaire(request: Request, p: Principal = READ):
+    return ok(request, {"questions": risk_profile.QUESTIONS, "levels": {str(k): v for k, v in risk_profile.LABELS.items()}})
+
+
+@router.get("/wealth/products")
+def wealth_products(request: Request, p: Principal = READ, db: Session = Depends(get_db)):
+    now = clock.now()
+    return ok(request, [wealth.product_view(x, p.user, now) for x in wealth.list_products(db)])
+
+
+@router.get("/wealth/holdings")
+def wealth_holdings(request: Request, p: Principal = READ, db: Session = Depends(get_db)):
+    return ok(request, [wealth.holding_view(h) for h in wealth.list_holdings(db, p.user.id)])
+
+
+@router.post("/wealth/subscribe/prepare")
+def wealth_subscribe_prepare(body: WealthSubscribeIn, request: Request, p: Principal = PREPARE,
+                             db: Session = Depends(get_db)):
+    return _prepare(request, db, p, "wealth_subscribe", body)
+
+
+@router.post("/wealth/redeem/prepare")
+def wealth_redeem_prepare(body: WealthRedeemIn, request: Request, p: Principal = PREPARE,
+                          db: Session = Depends(get_db)):
+    return _prepare(request, db, p, "wealth_redeem", body)

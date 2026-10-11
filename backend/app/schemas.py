@@ -122,3 +122,23 @@ class MerchantPayIn(PrepareBase):
     amount: str
     order_ref: str = Field(..., min_length=1, max_length=60)  # 订单号：同一商户同一订单号只能支付一次
     channel: Literal["online", "offline"] = "online"
+
+
+class WealthSubscribeIn(PrepareBase):
+    account_id: str
+    product_id: str
+    amount: str
+
+
+class WealthRedeemIn(PrepareBase):
+    holding_id: str
+    shares: str | None = None  # 缺省 = 全部赎回；最多两位小数
+    account_id: str | None = None  # 缺省 = 原申购账户
+
+
+class RiskAnswersIn(BaseModel):
+    answers: dict[str, int]
+
+
+class NavIn(BaseModel):
+    nav: str  # 如 "1.0600"，最多四位小数

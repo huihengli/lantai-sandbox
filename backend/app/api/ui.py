@@ -9,10 +9,10 @@ from app.api.common import ok
 from app.db import get_db
 from app.errors import LantaiError
 from app.models import AuditLog, AuthToken, User
-from app.schemas import GrantIn, LoginIn, OtpIn
+from app.schemas import GrantIn, LoginIn, OtpIn, RiskAnswersIn
 from app.security import auth
 from app.security.auth import Principal, make_ctx, require
-from app.services import audit, operation
+from app.services import audit, operation, risk_profile
 
 router = APIRouter(prefix="/ui", tags=["ui"])
 
@@ -145,3 +145,11 @@ def audit_row(r: AuditLog) -> dict:
 def my_audit(request: Request, p: Principal = READ, db: Session = Depends(get_db)):
     rows = db.scalars(select(AuditLog).where(AuditLog.user_id == p.user.id).order_by(AuditLog.id.desc()).limit(100))
     return ok(request, [audit_row(r) for r in rows])
+
+
+@router.put("/risk-profile")
+def submit_risk_profile(body: RiskAnswersIn, request: Request, p: Principal = Depends(require("confirm", ui_only=True)),
+                        db: Session = Depends(get_db)):
+    """提交风险测评答案。等级由银行按答案计算，Agent 无法提交或指定。"""
+    ctx = make_ctx(request, db, p)
+    return ok(request, audit.guarded(ctx, "risk_assessment", lambda: risk_profile.assess(ctx, p.user, body.answers)))

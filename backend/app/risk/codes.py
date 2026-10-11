@@ -34,6 +34,11 @@ CATALOG: dict[str, tuple[str, str, str]] = {
     "MERCHANT_RISKY": ("blocked", "该商户已被列入风险名单，支付被拦截", "提醒用户核实商户身份，谨防返利、刷单类诈骗"),
     "NEW_MERCHANT": ("medium", "首次向该商户支付", "提醒用户核实商户与订单"),
     "OVERSEAS_PAYMENT": ("medium", "该商户位于境外", "确认用户知晓境外交易的汇率与风险"),
+    "RISK_PROFILE_MISSING": ("blocked", "{status}，请先完成风险测评后再购买理财产品", "引导用户到界面完成风险测评（测评只能由用户本人提交）"),
+    "RISK_LEVEL_FORBIDDEN": ("blocked", "产品风险等级 {product} 超出您的风险承受能力 {user} 两级及以上，不适合购买", "不要劝说用户绕过；可推荐风险等级不高于其承受能力的产品"),
+    "RISK_LEVEL_MISMATCH": ("high", "产品风险等级 {product} 高于您的风险承受能力 {user}，属于不匹配购买，需特别确认", "明确告知风险，确认用户理解并自愿购买"),
+    "NAV_RISK_NOTICE": ("low", "净值型产品不保本，净值会波动，可能出现本金亏损", "向用户说明过往业绩不代表未来表现"),
+    "REDEEM_LOSS": ("low", "按当前净值赎回将实现亏损 {loss} 元", "提示用户可考虑继续持有，由其自行决定"),
     "EARLY_WITHDRAW_LOSS": ("low", "提前支取将损失利息 {loss} 元（到期可得 {full} 元，现仅 {early} 元）",
                             "对比到期日期，建议用户权衡"),
 }

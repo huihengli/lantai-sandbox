@@ -3,7 +3,7 @@ import { onBeforeUnmount, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import {
   PhHouse, PhArrowsLeftRight, PhVault, PhShieldCheck, PhKey, PhClockCounterClockwise,
-  PhSlidersHorizontal, PhSun, PhMoon, PhSignOut, PhListBullets, PhUsers, PhCreditCard, PhRepeat, PhStorefront,
+  PhSlidersHorizontal, PhSun, PhMoon, PhSignOut, PhListBullets, PhUsers, PhCreditCard, PhRepeat, PhStorefront, PhChartLineUp,
 } from "@phosphor-icons/vue";
 import SealLogo from "../components/SealLogo.vue";
 import { api } from "../api";
@@ -20,6 +20,7 @@ const nav = [
   { to: "/funds", label: "代扣与预留", icon: PhRepeat },
   { to: "/pay", label: "商户支付", icon: PhStorefront },
   { to: "/deposits", label: "定期存款", icon: PhVault },
+  { to: "/wealth", label: "理财", icon: PhChartLineUp },
   { to: "/confirm", label: "确认中心", icon: PhShieldCheck, badge: true },
   { to: "/grants", label: "助手授权", icon: PhKey },
   { to: "/audit", label: "审计记录", icon: PhClockCounterClockwise },

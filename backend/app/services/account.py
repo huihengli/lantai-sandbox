@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app import clock
 from app.errors import LantaiError
 from app.services import events
-from app.models import Account, Hold, Transaction
+from app.models import Account, Hold, Transaction  # noqa: F401
 from app.money import new_id
 
 TYPE_LABEL = {"demand": "活期账户", "savings": "储蓄账户"}

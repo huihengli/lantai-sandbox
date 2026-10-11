@@ -1,5 +1,6 @@
 """演示管理接口，需 X-Admin-Key 头。"""
 import hmac
+from decimal import Decimal, InvalidOperation
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Request
@@ -11,10 +12,10 @@ from app.api.common import ok
 from app.api.ui import audit_row
 from app.db import SessionLocal, get_db
 from app.errors import LantaiError
-from app.models import AuditLog, Blacklist, Card
+from app.models import AuditLog, Blacklist, Card, WealthProduct
 from app.money import new_id
 from app.security import ratelimit
-from app.schemas import BlacklistIn, ClockIn
+from app.schemas import BlacklistIn, ClockIn, NavIn
 from app.seed.seed_data import reset_database
 from app.services import audit
 from app.services import mandates as mandate_svc
@@ -115,3 +116,23 @@ def charge_mandate(mandate_id: str, request: Request, db: Session = Depends(get_
     """演示用：模拟商户发起一次代扣。"""
     ctx = _ctx(request, db)
     return ok(request, audit.guarded(ctx, "mandate_charge", lambda: mandate_svc.charge(ctx, mandate_id)))
+
+
+@router.post("/wealth/{product_id}/nav")
+def set_nav(product_id: str, body: NavIn, request: Request, db: Session = Depends(get_db)):
+    """演示用：调整理财产品净值（制造盈亏）。"""
+    def run():
+        p = db.get(WealthProduct, product_id)
+        if p is None:
+            raise LantaiError("VALIDATION_ERROR", "产品不存在")
+        try:
+            d = Decimal(body.nav)
+        except InvalidOperation:
+            raise LantaiError("VALIDATION_ERROR", "nav 格式不合法") from None
+        if d <= 0 or d != d.quantize(Decimal("0.0001")):
+            raise LantaiError("VALIDATION_ERROR", "nav 需大于 0 且最多四位小数")
+        p.nav_bp, p.nav_updated_at = int(d * 10000), clock.now()
+        audit.log(_ctx(request, db), "wealth_nav_set", detail={"product_id": product_id, "nav": body.nav})
+        return {"product_id": product_id, "nav": f"{d:.4f}"}
+
+    return ok(request, audit.guarded(_ctx(request, db), "wealth_nav_set", run))

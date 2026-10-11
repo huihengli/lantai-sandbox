@@ -20,6 +20,8 @@ class User(Base):
     phone_masked: Mapped[str] = mapped_column(String(20))
     password_hash: Mapped[str] = mapped_column(String(200))
     risk_profile: Mapped[str] = mapped_column(String(20), default="normal")
+    risk_level: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 风险测评等级 1~5
+    risk_assessed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime)
 
@@ -254,3 +256,31 @@ class Event(Base):
     type: Mapped[str] = mapped_column(String(20))
     ref_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
     data_json: Mapped[str] = mapped_column(Text)
+
+
+class WealthProduct(Base):
+    __tablename__ = "wealth_products"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    name: Mapped[str] = mapped_column(String(64))
+    kind: Mapped[str] = mapped_column(String(10))  # money / bond / mixed / equity
+    risk_level: Mapped[int] = mapped_column(Integer)  # R1~R5
+    nav_bp: Mapped[int] = mapped_column(Integer)  # 净值，单位 1e-4 元
+    nav_updated_at: Mapped[datetime] = mapped_column(DateTime)
+    min_amount_cents: Mapped[int] = mapped_column(BigInteger)
+    redeem_days: Mapped[int] = mapped_column(Integer, default=1)  # T+N，演示环境即时到账，仅作展示
+    status: Mapped[str] = mapped_column(String(10), default="on_sale")
+    description: Mapped[str | None] = mapped_column(String(120), nullable=True)
+
+
+class WealthHolding(Base):
+    __tablename__ = "wealth_holdings"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    product_id: Mapped[str] = mapped_column(ForeignKey("wealth_products.id"))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id"))  # 默认赎回到账账户
+    shares_c: Mapped[int] = mapped_column(BigInteger)  # 份额，单位 0.01 份
+    cost_cents: Mapped[int] = mapped_column(BigInteger)
+    status: Mapped[str] = mapped_column(String(10), default="active")  # active / closed
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    product: Mapped[WealthProduct] = relationship()

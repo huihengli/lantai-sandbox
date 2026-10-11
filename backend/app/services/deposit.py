@@ -12,6 +12,7 @@ from app.models import DepositHolding, DepositProduct, User
 from app.money import fmt, mask, new_id, parse_amount, round_cents
 from app.risk import engine
 from app.services import account as acct
+from app.services import events
 from app.services.plan import Plan
 
 
@@ -138,3 +139,23 @@ def execute_early(db: Session, op, plan: Plan, now) -> dict:
     h.status, h.closed_at, h.interest_paid_cents = "withdrawn_early", now, interest
     return {"holding_id": h.id, "principal": fmt(h.principal_cents), "interest": fmt(interest),
             "balance_after": fmt(acc.balance_cents), "executed_at": clock.iso(now)}
+
+
+# ---- 到期结算（惰性）：任何鉴权请求都会先把已到期的定期兑付入账，无需调度器 ----
+def settle_matured(db: Session, user_id: str, now) -> int:
+    today = clock.local(now).date()
+    due = list(db.scalars(select(DepositHolding).where(
+        DepositHolding.user_id == user_id, DepositHolding.status == "holding", DepositHolding.maturity_date <= today)))
+    for h in due:
+        acc = db.get(acct.Account, h.account_id)
+        interest = maturity_interest(h.principal_cents, h.product)
+        acct.credit(db, acc, h.principal_cents)
+        acct.add_txn(db, acc, "in", "deposit_in", h.principal_cents, now, counterparty=h.product.name, memo="到期兑付本金")
+        if interest > 0:
+            acct.credit(db, acc, interest)
+            acct.add_txn(db, acc, "in", "interest", interest, now, counterparty=h.product.name, memo="到期利息")
+        h.status, h.closed_at, h.interest_paid_cents = "matured", now, interest
+        events.emit(db, user_id, "deposit", h.id, {"holding_id": h.id, "status": "matured",
+                                                   "principal": fmt(h.principal_cents), "interest": fmt(interest)})
+    db.flush()
+    return len(due)

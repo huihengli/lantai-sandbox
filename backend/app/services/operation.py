@@ -11,7 +11,7 @@ from app.errors import LantaiError
 from app.models import PendingOperation, User
 from app.money import new_id
 from app.security import otp
-from app.services import audit, cards, events, deposit, holds, idempotency, mandates, payments, transfer
+from app.services import audit, cards, events, deposit, holds, idempotency, mandates, payments, transfer, wealth
 
 ACTIVE = {"PREPARED", "OTP_PENDING", "OTP_VERIFIED"}
 
@@ -21,21 +21,24 @@ NORMALIZE = {"transfer": transfer.normalize, "deposit_create": deposit.normalize
              "card_reissue": cards.normalize_card_only, "card_controls": cards.normalize_controls,
              "card_limits": cards.normalize_limits, "account_limits": cards.normalize_limits,
              "mandate_cancel": mandates.normalize_cancel, "hold_release": holds.normalize_release,
-             "merchant_payment": payments.normalize}
+             "merchant_payment": payments.normalize, "wealth_subscribe": wealth.normalize_subscribe,
+             "wealth_redeem": wealth.normalize_redeem}
 BUILD = {"transfer": transfer.build_plan, "deposit_create": deposit.build_create_plan,
          "deposit_early_withdraw": deposit.build_early_plan,
          "card_apply": cards.build_apply_plan, "card_unfreeze": cards.build_unfreeze_plan,
          "card_reissue": cards.build_reissue_plan, "card_controls": cards.build_controls_plan,
          "card_limits": cards.build_card_limits_plan, "account_limits": cards.build_account_limits_plan,
          "mandate_cancel": mandates.build_cancel_plan, "hold_release": holds.build_release_plan,
-         "merchant_payment": payments.build_plan}
+         "merchant_payment": payments.build_plan, "wealth_subscribe": wealth.build_subscribe_plan,
+         "wealth_redeem": wealth.build_redeem_plan}
 EXECUTE = {"transfer": transfer.execute, "deposit_create": deposit.execute_create,
            "deposit_early_withdraw": deposit.execute_early,
            "card_apply": cards.execute_apply, "card_unfreeze": cards.execute_unfreeze,
            "card_reissue": cards.execute_reissue, "card_controls": cards.execute_controls,
            "card_limits": cards.execute_card_limits, "account_limits": cards.execute_account_limits,
            "mandate_cancel": mandates.execute_cancel, "hold_release": holds.execute_release,
-           "merchant_payment": payments.execute}
+           "merchant_payment": payments.execute, "wealth_subscribe": wealth.execute_subscribe,
+           "wealth_redeem": wealth.execute_redeem}
 
 
 def params_hash(params: dict) -> str:

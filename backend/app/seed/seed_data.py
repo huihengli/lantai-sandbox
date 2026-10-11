@@ -9,7 +9,7 @@ from datetime import timedelta
 
 from app import clock, config, db
 from app.models import (Account, AutopayPlan, Blacklist, Card, DepositHolding, DepositProduct, Merchant,
-                        Payee, Transaction, User)
+                        Payee, Transaction, User, WealthProduct)
 from app.money import new_id
 from app.security.auth import hash_password
 from app.services.deposit import add_months
@@ -100,7 +100,9 @@ def seed() -> None:
     with db.SessionLocal() as s:
         for uid, name, phone in USERS:
             s.add(User(id=uid, name=name, phone=phone, phone_masked=phone[:3] + "****" + phone[-4:],
-                       password_hash=pwd, created_at=now - timedelta(days=400)))
+                       password_hash=pwd, created_at=now - timedelta(days=400),
+                       risk_level=3 if uid == "usr_001" else None,  # 测试1 平衡型；其余未测评
+                       risk_assessed_at=now - timedelta(days=30) if uid == "usr_001" else None))
         s.flush()
         for aid, uid, no, typ, bal in ACCOUNTS:
             s.add(Account(id=aid, user_id=uid, account_no=no, type=typ, bank_code=config.HOME_BANK,
@@ -140,6 +142,18 @@ def seed() -> None:
                        online_enabled=True, overseas_enabled=False, atm_enabled=True,
                        single_limit_cents=config.CARD_DEFAULT_SINGLE_CENTS,
                        daily_limit_cents=config.CARD_DEFAULT_DAILY_CENTS, created_at=now - timedelta(days=400)))
+        s.add_all([
+            WealthProduct(id="wp_money", name="澜钱宝货币基金", kind="money", risk_level=1, nav_bp=10000, nav_updated_at=now,
+                          min_amount_cents=100, redeem_days=0, description="流动性管理，随存随取"),
+            WealthProduct(id="wp_bond", name="稳健债券基金 A", kind="bond", risk_level=2, nav_bp=10523, nav_updated_at=now,
+                          min_amount_cents=10_000, redeem_days=1, description="以中高等级债券为主"),
+            WealthProduct(id="wp_mix", name="均衡混合基金 B", kind="mixed", risk_level=3, nav_bp=12310, nav_updated_at=now,
+                          min_amount_cents=10_000, redeem_days=2, description="股债均衡配置"),
+            WealthProduct(id="wp_growth", name="成长优选股票基金 C", kind="equity", risk_level=4, nav_bp=15870, nav_updated_at=now,
+                          min_amount_cents=10_000, redeem_days=3, description="精选成长风格个股"),
+            WealthProduct(id="wp_tech", name="进取科技主题基金 D", kind="equity", risk_level=5, nav_bp=9420, nav_updated_at=now,
+                          min_amount_cents=10_000, redeem_days=3, description="单一主题，波动较大"),
+        ])
         s.add_all([
             Merchant(id="mch_flower", name="澜花坊", category="礼品", description="鲜花同城配送"),
             Merchant(id="mch_cake", name="甜时光蛋糕", category="餐饮", description="定制蛋糕"),

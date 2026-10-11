@@ -15,7 +15,7 @@ from app.db import get_db
 from app.errors import LantaiError
 from app.models import AuthToken, User
 from app.money import new_id
-from app.services import audit
+from app.services import audit, deposit
 
 USER_SCOPES = ["read", "prepare", "protect", "confirm", "otp", "grant"]
 AGENT_ALLOWED_SCOPES = {"read", "prepare", "protect"}  # protect：仅限收紧类（保护性）直接操作
@@ -98,6 +98,8 @@ def require(scope: str | None = None, ui_only: bool = False):
         user = db.get(User, row.user_id)
         if user is None or user.status != "active":
             raise _deny(db, request, "USER_FROZEN", "用户已被冻结", row.user_id, actor)
+        if deposit.settle_matured(db, user.id, clock.now()):
+            db.commit()  # 到期定期兑付入账
         return Principal(user=user, token=row, scopes=scopes)
 
     return dependency
