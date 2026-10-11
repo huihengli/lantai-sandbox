@@ -20,6 +20,8 @@ FRONTEND_BASE_URL = _env("FRONTEND_BASE_URL", PUBLIC_BASE_URL)
 # 前端构建产物目录（pnpm build 后的 dist）；不存在则不托管。
 FRONTEND_DIST = _env("FRONTEND_DIST", os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist"))
 ADMIN_KEY = _env("ADMIN_KEY", "dev-admin-key")  # 仅本地演示
+# 数据库结构落后于代码时：1=启动时清空并重建（开发用）；默认拒绝启动并提示
+RESET_DB_ON_START = _env("RESET_DB_ON_START", "") == "1"
 
 TIMEZONE_OFFSET = _env("TIMEZONE_OFFSET", "+01:00")
 TZ = _parse_offset(TIMEZONE_OFFSET)

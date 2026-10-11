@@ -29,7 +29,10 @@ export async function request(method, path, { body, query, headers = {}, auth = 
   let json;
   try { json = await res.json(); } catch { json = null; }
   if (!json || json.ok !== true) {
-    const err = new ApiError(json?.error || { code: "BAD_RESPONSE", message: `服务返回异常（${res.status}）` }, res.status);
+    const fallback = res.status === 404
+      ? "接口不存在：后端可能还是旧版本，请重启后端服务（并重置数据库）"
+      : `服务返回异常（${res.status}）`;
+    const err = new ApiError(json?.error || { code: "BAD_RESPONSE", message: fallback }, res.status);
     if (auth && AUTH_CODES.has(err.code)) clearSession(true);
     throw err;
   }

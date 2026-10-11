@@ -11,10 +11,10 @@ from sqlalchemy import select
 
 from app import config
 from app.api import admin, ui, v1
-from app.db import SessionLocal, create_tables
+from app.db import SessionLocal, create_tables, schema_problems
 from app.errors import LantaiError
 from app.models import User
-from app.seed.seed_data import seed
+from app.seed.seed_data import reset_database, seed
 
 log = logging.getLogger("lantai")
 
@@ -22,6 +22,16 @@ log = logging.getLogger("lantai")
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     create_tables()
+    problems = schema_problems()
+    if problems:
+        if config.RESET_DB_ON_START:
+            log.warning("数据库结构落后于代码（%s），按 RESET_DB_ON_START=1 重建", "; ".join(problems[:5]))
+            reset_database()
+        else:
+            raise RuntimeError(
+                f"数据库结构与当前代码不一致（共 {len(problems)} 处，如：{'; '.join(problems[:3])}）。"
+                "开发环境请删除 backend/data/lantai.db 后重启（Postgres 请删除数据卷），"
+                "或设置环境变量 RESET_DB_ON_START=1 让服务启动时清空并重建。")
     with SessionLocal() as db:
         empty = db.scalar(select(User.id).limit(1)) is None
     if empty:
