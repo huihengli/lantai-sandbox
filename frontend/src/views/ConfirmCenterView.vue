@@ -9,7 +9,7 @@ import ReasonList from "../components/ReasonList.vue";
 import SummaryList from "../components/SummaryList.vue";
 import { api } from "../api";
 import { toast } from "../stores/session";
-import { ACTIVE_STATUS, OP_TYPE, errorText, fmtTime, opHeadline } from "../utils";
+import { ACTIVE_STATUS, OP_TYPE, errorText, fmtMoney, fmtTime, opHeadline } from "../utils";
 
 const route = useRoute();
 const router = useRouter();
