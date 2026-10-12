@@ -6,9 +6,7 @@ import { api } from "../api";
 import { toast } from "../stores/session";
 import { errorText, fmtTime } from "../utils";
 
-const KEY = "lt_admin_key";
-const adminKey = ref("dev-admin-key");
-try { adminKey.value = localStorage.getItem(KEY) || adminKey.value; } catch { /* 忽略 */ }
+const adminKey = ref(""); // 不预填、不落地存储，每次打开手动输入
 
 const now = ref("");
 const when = ref("");
@@ -16,11 +14,8 @@ const blacklist = ref([]);
 const bl = reactive({ account_no: "", bank_code: "OTHER" });
 const busy = ref(false);
 
-const remember = () => { try { localStorage.setItem(KEY, adminKey.value); } catch { /* 忽略 */ } };
-
 async function run(fn, okMsg) {
   busy.value = true;
-  remember();
   try {
     const r = await fn();
     if (okMsg) toast(okMsg);
@@ -81,7 +76,7 @@ onMounted(() => { loadBl(); });
   <div class="grid-2" style="align-items: start">
     <section class="panel">
       <div class="panel-title"><h3>管理密钥</h3></div>
-      <div class="field"><label for="ak">X-Admin-Key</label><input id="ak" v-model="adminKey" class="input mono" autocomplete="off" @change="remember" /></div>
+      <div class="field"><label for="ak">X-Admin-Key</label><input id="ak" v-model="adminKey" class="input mono" autocomplete="off" /></div>
       <button class="btn danger" type="button" :disabled="busy" @click="reset"><PhArrowCounterClockwise :size="20" aria-hidden="true" />重置演示数据</button>
     </section>
 

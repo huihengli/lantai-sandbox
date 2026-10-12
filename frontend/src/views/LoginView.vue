@@ -16,6 +16,7 @@ const showPwd = ref(false);
 const loading = ref(false);
 const error = ref("");
 
+const showDemo = import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEMO === "1"; // 生产构建不展示演示账号
 const demos = [
   { name: "测试1", phone: "13800000001", note: "主演示账户" },
   { name: "测试2", phone: "13900000002", note: "越权校验演示" },
@@ -88,7 +89,7 @@ async function submit() {
         </button>
 
         <hr class="divider" />
-        <div class="demo">
+        <div v-if="showDemo" class="demo">
           <span class="label muted"><PhLockKey :size="16" aria-hidden="true" /> 演示账号（本地环境，密码 Lantai@2026）</span>
           <div class="row">
             <button v-for="d in demos" :key="d.phone" type="button" class="btn small" @click="fillDemo(d)">

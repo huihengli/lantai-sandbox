@@ -19,7 +19,9 @@ const routes = [
       { path: "confirm/:id?", name: "confirm", component: () => import("../views/ConfirmCenterView.vue"), meta: { title: "确认中心" } },
       { path: "grants", name: "grants", component: () => import("../views/GrantsView.vue"), meta: { title: "助手授权" } },
       { path: "audit", name: "audit", component: () => import("../views/AuditView.vue"), meta: { title: "审计记录" } },
-      { path: "demo", name: "demo", component: () => import("../views/DemoView.vue"), meta: { title: "演示控制台" } },
+      ...(import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEMO === "1"
+        ? [{ path: "demo", name: "demo", component: () => import("../views/DemoView.vue"), meta: { title: "演示控制台" } }]
+        : []),
     ],
   },
   { path: "/:pathMatch(.*)*", redirect: "/" },

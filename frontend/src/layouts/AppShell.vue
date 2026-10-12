@@ -24,7 +24,8 @@ const nav = [
   { to: "/confirm", label: "确认中心", icon: PhShieldCheck, badge: true },
   { to: "/grants", label: "助手授权", icon: PhKey },
   { to: "/audit", label: "审计记录", icon: PhClockCounterClockwise },
-  { to: "/demo", label: "演示控制台", icon: PhSlidersHorizontal },
+  ...(import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEMO === "1"
+    ? [{ to: "/demo", label: "演示控制台", icon: PhSlidersHorizontal }] : []),
 ];
 
 let timer;
