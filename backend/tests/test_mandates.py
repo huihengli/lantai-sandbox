@@ -57,5 +57,6 @@ def test_cancelled_mandate_cannot_be_charged_and_drops_out_of_risk(client, lin):
     lin.confirm(op["data"]["operation_id"])
     assert client.post("/admin/mandates/apy_001/charge", headers=ADMIN).json()["error"]["code"] == "MANDATE_NOT_ACTIVE"
     r = lin.transfer("49000.00")  # 房租协议已取消，仅剩信用卡 2000 元在 7 天内；转后余额 1800 < 2000
-    risk = next(x for x in r["data"]["risk"]["reasons"] if x["code"] == "AUTOPAY_AT_RISK")
+    ui = client.get(f"/ui/operations/{r['data']['operation_id']}", headers=lin.session).json()["data"]
+    risk = next(x for x in ui["risk"]["reasons"] if x["code"] == "AUTOPAY_AT_RISK")
     assert "房东" not in risk["message"] and "信用卡中心" in risk["message"]

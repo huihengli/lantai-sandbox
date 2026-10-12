@@ -16,7 +16,7 @@ def bal(client, lin, acc="acc_001"):
 
 def test_create_hold_reduces_available_not_balance(client, lin):
     r = hold(client, lin, purpose="爱人生日", until=IN_30_DAYS).json()["data"]
-    assert r["hold"]["status"] == "active" and r["hold"]["created_by"] == "agent" and r["available_after"] == "49800.00"
+    assert r["hold"]["status"] == "active" and r["hold"]["created_by"] == "agent" and "available_after" not in r
     b = bal(client, lin)
     assert (b["balance"], b["held"], b["available"]) == ("50800.00", "1000.00", "49800.00")
     listed = client.get("/api/v1/accounts/acc_001/holds", headers=lin.agent).json()["data"]
@@ -26,7 +26,7 @@ def test_create_hold_reduces_available_not_balance(client, lin):
 def test_held_funds_cannot_be_transferred_or_deposited(client, lin):
     hold(client, lin, "10000.00")
     r = lin.transfer("45000.00")  # 可用 40800
-    assert r["error"]["code"] == "INSUFFICIENT_BALANCE" and r["error"]["details"]["available"] == "40800.00"
+    assert r["error"]["code"] == "INSUFFICIENT_BALANCE" and not r["error"]["details"]
     assert lin.transfer("40800.00")["data"]["status"] in ("PREPARED", "OTP_PENDING")
     d = client.post("/api/v1/deposits/prepare", json={"account_id": "acc_001", "product_id": "prd_3m", "amount": "45000.00"},
                     headers=lin.agent).json()

@@ -19,11 +19,13 @@ def test_add_payee_then_list_and_search(client, lin):
 
 
 def test_add_payee_validations(client, lin):
-    assert add(client, lin, name="张山").json()["error"]["code"] == "PAYEE_NAME_MISMATCH"
-    assert add(client, lin, account_no="6217000099999999").json()["error"]["code"] == "PAYEE_NOT_FOUND"
+    mismatch = add(client, lin, name="张山").json()["error"]
+    assert mismatch["code"] == "PAYEE_NOT_FOUND"
+    missing = add(client, lin, account_no="6217000099999999").json()["error"]
+    assert missing == {**mismatch, "details": {}} or missing["message"] == mismatch["message"]  # 不存在与户名不符不可区分
     assert add(client, lin, account_no="6217000010001002", name="测试1").json()["error"]["code"] == "SAME_ACCOUNT"
     bl = add(client, lin, account_no="6222000088886666", name="刘某某", bank_code="OTHER")
-    assert bl.status_code == 409 and bl.json()["error"]["code"] == "RISK_BLOCKED"
+    assert bl.status_code == 404 and bl.json()["error"]["message"] == mismatch["message"]  # 黑名单不可探测
 
 
 def test_added_payee_still_triggers_new_payee_otp(client, lin):

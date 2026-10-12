@@ -73,7 +73,9 @@ def test_card_limits_single_and_daily(client, lin):
         assert finish(lin, pay(client, lin, card="crd_002", merchant="mch_mart", amount="18000.00", order=f"M-{i}"))["data"]["status"] == "EXECUTED"
     third = pay(client, lin, card="crd_002", merchant="mch_mart", amount="18000.00", order="M-3")
     assert third["data"]["status"] == "BLOCKED" and "CARD_LIMIT_EXCEEDED" in codes(third)
-    assert "今日已用 36000.00" in third["data"]["risk"]["reasons"][0]["message"]
+    assert "36000.00" not in third["data"]["risk"]["reasons"][0]["message"]  # Agent 通道不披露当日累计
+    ui = lin.c.get(f"/ui/operations/{third['data']['operation_id']}", headers=lin.session).json()["data"]
+    assert "今日已用 36000.00" in ui["risk"]["reasons"][0]["message"]  # 用户通道保留
 
 
 def test_risky_merchant_blocked(client, lin):
@@ -85,7 +87,7 @@ def test_risky_merchant_blocked(client, lin):
 def test_hold_reduces_spendable(client, lin):
     client.post("/api/v1/accounts/acc_001/holds", json={"amount": "50700.00"}, headers=lin.agent)
     r = pay(client, lin, amount="200.00")
-    assert r["error"]["code"] == "INSUFFICIENT_BALANCE" and r["error"]["details"]["available"] == "100.00"
+    assert r["error"]["code"] == "INSUFFICIENT_BALANCE" and not r["error"]["details"]
 
 
 def test_confirm_rechecks_card_state(client, lin):

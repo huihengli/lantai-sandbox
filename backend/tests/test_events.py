@@ -22,7 +22,8 @@ def test_transfer_emits_operation_and_transaction_events(client, lin):
     assert [e["type"] for e in page["items"]] == ["operation", "txn_out", "operation"]
     assert page["items"][0]["data"]["status"] == "PREPARED" and page["items"][2]["data"]["status"] == "EXECUTED"
     out = page["items"][1]["data"]
-    assert (out["amount"], out["counterparty"], out["balance_after"], out["operation_id"]) == ("500.00", "李四", "50300.00", op)
+    assert (out["amount"], out["counterparty"], out["operation_id"]) == ("500.00", "李四", op)
+    assert "balance_after" not in out
     assert [e["id"] for e in page["items"]] == sorted(e["id"] for e in page["items"])  # 严格递增
 
 

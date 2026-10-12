@@ -1,6 +1,7 @@
 import os
 
 os.environ["DATABASE_URL"] = "sqlite://"  # 内存库，必须在导入 app 之前设置
+os.environ["PASSWORD_ITERATIONS"] = "1000"  # 测试加速
 
 from datetime import datetime  # noqa: E402
 
