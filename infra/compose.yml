@@ -11,7 +11,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lantai_dev}
       POSTGRES_DB: ${POSTGRES_DB:-lantai}
     ports:
-      - "${POSTGRES_PORT:-15432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-15432}:5432"
     volumes:
       - lantai_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -28,10 +28,16 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-lantai}:${POSTGRES_PASSWORD:-lantai_dev}@db:5432/${POSTGRES_DB:-lantai}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8001}
+      APP_ENV: ${APP_ENV:-dev}  # 生产请设 prod：需显式强 ADMIN_KEY / 非默认数据库口令，并关闭 /admin、/docs、OTP 演示取码
       ADMIN_KEY: ${ADMIN_KEY:-dev-admin-key}
+      OTP_PEPPER: ${OTP_PEPPER:-}
       TIMEZONE_OFFSET: ${TIMEZONE_OFFSET:-+01:00}
     ports:
-      - "${BACKEND_PORT:-8001}:8001"
+      - "127.0.0.1:${BACKEND_PORT:-8001}:8001"
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/healthz')"]
       interval: 10s

@@ -30,6 +30,8 @@ docker compose -f infra/compose.yml up -d db           # 只起数据库，后�
 ```
 
 可用环境变量：`POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB / POSTGRES_PORT(15432) / BACKEND_PORT(8001) / ADMIN_KEY / PUBLIC_BASE_URL / TIMEZONE_OFFSET`。
+生产/加固开关（后端）：`APP_ENV=prod` 时默认关闭 `/admin`、`/docs`、OTP 演示取码，并要求显式的强 `ADMIN_KEY`（≥24 位）与非默认数据库口令；可单独用 `ADMIN_ENABLED / DOCS_ENABLED / OTP_DEMO_MODE / OTP_PEPPER / SEED_PASSWORD / PASSWORD_ITERATIONS` 覆盖。前端演示控制台与登录页演示账号仅在 `pnpm dev` 或构建时设 `VITE_ENABLE_DEMO=1` 时可用。数据库端口与后端端口默认只绑定 127.0.0.1。无表结构变更，旧库无需重建；旧口令哈希会在登录成功后自动升级。
+
 未包含 Redis：幂等、令牌、OTP、限额统计都落库，当前没有需要它的场景。
 
 入口（后端默认端口 8001）：Swagger `/docs` · 健康检查 `/healthz`；前端构建后由后端直接托管在 `/`。

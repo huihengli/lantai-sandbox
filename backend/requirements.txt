@@ -1,5 +1,6 @@
-fastapi>=0.115,<1
-uvicorn[standard]>=0.30
-sqlalchemy>=2.0,<2.1
-pydantic>=2.7,<3
-psycopg[binary]>=3.1
+# 精确锁定版本（可重复构建）；升级时同步跑 pip-audit。更严格可用 pip-compile --generate-hashes。
+fastapi==0.119.0
+uvicorn[standard]==0.49.0
+sqlalchemy==2.0.45
+pydantic==2.12.0
+psycopg[binary]==3.3.6
