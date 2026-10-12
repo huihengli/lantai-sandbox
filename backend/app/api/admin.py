@@ -22,6 +22,8 @@ from app.services import mandates as mandate_svc
 
 
 def admin_only(request: Request) -> None:
+    if not config.ADMIN_ENABLED:
+        raise LantaiError("NOT_FOUND", "接口不存在")
     if not hmac.compare_digest(request.headers.get("x-admin-key", ""), config.ADMIN_KEY):
         raise LantaiError("AUTH_INVALID", "管理密钥无效")
 
@@ -30,12 +32,12 @@ router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(admin_
 
 
 def _ctx(request: Request, db: Session) -> audit.Ctx:
-    return audit.Ctx(db, request.state.request_id, None, "admin", "admin")
+    return audit.Ctx(db, request.state.request_id, None, "admin", "admin", ip=request.client.host if request.client else None)
 
 
 @router.post("/reset")
 def reset(request: Request):
-    reset_database()
+    reset_database(keep_audit=True)
     ratelimit.reset()
     with SessionLocal() as db:  # 重置后写一条 reset 事件
         ctx = _ctx(request, db)

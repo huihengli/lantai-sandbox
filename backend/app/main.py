@@ -21,6 +21,11 @@ log = logging.getLogger("lantai")
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    if config.APP_ENV == "prod" and "lantai_dev" in config.DATABASE_URL:
+        raise RuntimeError("APP_ENV=prod 不得使用默认数据库口令")
+    if config.APP_ENV == "prod" and config.ADMIN_ENABLED and (
+            config.ADMIN_KEY == "dev-admin-key" or len(config.ADMIN_KEY) < config.ADMIN_KEY_MIN_LENGTH):
+        raise RuntimeError(f"APP_ENV=prod 且启用 /admin 时，必须设置至少 {config.ADMIN_KEY_MIN_LENGTH} 位的强随机 ADMIN_KEY")
     create_tables()
     problems = schema_problems()
     if problems:
@@ -43,14 +48,36 @@ app = FastAPI(
     title="澜台 Lantai 模拟银行 API",
     description="面向智能金融助手 Agent 的模拟银行后端。Agent 通道 /api/v1，用户通道 /ui，演示管理 /admin。"
                 "后端不信任 Agent：所有限额、黑名单、归属、确认校验均在此完成。",
-    version="1.0.0", lifespan=lifespan)
+    version="1.0.0", lifespan=lifespan,
+    docs_url="/docs" if config.DOCS_ENABLED else None, redoc_url="/redoc" if config.DOCS_ENABLED else None,
+    openapi_url="/openapi.json" if config.DOCS_ENABLED else None)
+
+_CSP = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'self'"
+_DOC_PATHS = ("/docs", "/redoc", "/openapi.json")
 
 
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
     request.state.request_id = "req_" + uuid.uuid4().hex[:8]
+    if len(request.url.path) > 256:
+        return _error(request, 404, "NOT_FOUND", "接口不存在")
+    try:
+        too_big = int(request.headers.get("content-length") or 0) > config.MAX_BODY_BYTES
+    except ValueError:
+        too_big = True
+    if too_big:
+        return _error(request, 413, "PAYLOAD_TOO_LARGE", "请求体过大")
     response = await call_next(request)
     response.headers["X-Request-ID"] = request.state.request_id
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    if request.url.path.startswith(("/api/", "/ui/", "/admin/")):
+        response.headers["Cache-Control"] = "no-store"
+    if not request.url.path.startswith(_DOC_PATHS):  # 文档页依赖外部脚本，不加 CSP
+        response.headers["Content-Security-Policy"] = _CSP
+    if config.APP_ENV == "prod":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
 
 
@@ -98,9 +125,15 @@ if os.path.isfile(os.path.join(_DIST, "index.html")):
         if path.startswith(_API_PREFIXES):
             return _error_response(path)
         candidate = os.path.join(_DIST, path)
-        if path and os.path.isfile(candidate) and os.path.abspath(candidate).startswith(_DIST):
+        if path and os.path.isfile(candidate) and _inside_dist(candidate):
             return FileResponse(candidate)
         return FileResponse(os.path.join(_DIST, "index.html"))
+
+    def _inside_dist(candidate: str) -> bool:
+        try:
+            return os.path.commonpath([os.path.realpath(_DIST), os.path.realpath(candidate)]) == os.path.realpath(_DIST)
+        except ValueError:
+            return False
 
     def _error_response(path: str):
         return JSONResponse(status_code=404, content={"ok": False, "request_id": "", "error": {

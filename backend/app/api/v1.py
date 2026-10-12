@@ -10,10 +10,11 @@ from app.api.common import idem_key, intent_of, ok
 from app.db import get_db
 from app.errors import LantaiError
 from app.models import (Account, DepositHolding, DepositProduct, Payee, Transaction)
-from app.money import fmt, mask, parse_amount
+from app.money import fmt, like_escape, mask, parse_amount
 from app.schemas import (AccountLimitsIn, WealthRedeemIn, WealthSubscribeIn, CardApplyIn, CardControlsIn, CardLimitsIn, CardOnlyIn, DepositIn,
                          EarlyWithdrawIn, HoldIn, HoldReleaseIn, MandateCancelIn, MerchantPayIn, PayeeIn, PayeePatch,
                          TransferIn)
+from app.security import ratelimit
 from app.security.auth import Principal, make_ctx, require
 from app.services import account as acct
 from app.services import audit, cards as card_svc, events as event_svc, deposit, holds as hold_svc, mandates as mandate_svc, operation, payments, risk_profile, transfer, wealth
@@ -97,10 +98,10 @@ def transactions(account_id: str, request: Request, p: Principal = READ, db: Ses
     if min_amount:
         stmt = stmt.where(Transaction.amount_cents >= parse_amount(min_amount))
     if keyword:  # 备注或对方名称包含关键词
-        like = f"%{keyword}%"
-        stmt = stmt.where(or_(Transaction.memo.ilike(like), Transaction.counterparty_name.ilike(like)))
+        like = f"%{like_escape(keyword)}%"
+        stmt = stmt.where(or_(Transaction.memo.ilike(like, escape="\\"), Transaction.counterparty_name.ilike(like, escape="\\")))
     if counterparty:
-        stmt = stmt.where(Transaction.counterparty_name.ilike(f"%{counterparty}%"))
+        stmt = stmt.where(Transaction.counterparty_name.ilike(f"%{like_escape(counterparty)}%", escape="\\"))
     if merchant_category:
         stmt = stmt.where(Transaction.merchant_category == merchant_category)
     rows = db.scalars(stmt.order_by(Transaction.occurred_at.desc(), Transaction.id.desc())
@@ -188,7 +189,7 @@ def early_withdraw_prepare(holding_id: str, request: Request, body: EarlyWithdra
 
 @router.get("/operations/{op_id}")
 def get_operation(op_id: str, request: Request, p: Principal = READ, db: Session = Depends(get_db)):
-    return ok(request, operation.view(operation.get_op(db, p.user.id, op_id)))
+    return ok(request, operation.view(operation.get_op(db, p.user.id, op_id), p.actor))
 
 
 @router.post("/operations/{op_id}/cancel")
@@ -204,6 +205,7 @@ def precheck(body: TransferIn, request: Request, p: Principal = READ, db: Sessio
     ctx = make_ctx(request, db, p, intent_of(body))
 
     def run():
+        ratelimit.check(f"probe:{p.user.id}", config.PREPARE_PROBE_LIMIT, config.PREPARE_PROBE_WINDOW)
         params = transfer.normalize(db, p.user, body)
         plan = transfer.build_plan(db, p.user, params, clock.now())
         audit.log(ctx, "risk_precheck", risk=plan.risk, detail={"summary": plan.summary})

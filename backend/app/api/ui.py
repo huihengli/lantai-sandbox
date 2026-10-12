@@ -10,9 +10,9 @@ from app.db import get_db
 from app.errors import LantaiError
 from app.models import AuditLog, AuthToken, User
 from app.schemas import GrantIn, LoginIn, OtpIn, RiskAnswersIn
-from app.security import auth
+from app.security import auth, ratelimit
 from app.security.auth import Principal, make_ctx, require
-from app.services import audit, operation, risk_profile
+from app.services import audit, events, idempotency, operation, risk_profile
 
 router = APIRouter(prefix="/ui", tags=["ui"])
 
@@ -21,12 +21,26 @@ READ = Depends(require("read", ui_only=True))
 
 @router.post("/login")
 def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
-    ctx = audit.Ctx(db, request.state.request_id, None, "user", "ui")
+    ctx = audit.Ctx(db, request.state.request_id, None, "user", "ui", **auth.client_info(request))
+    ip = ctx.ip or "unknown"
 
     def run():
+        phone_key, ip_key = f"login:{body.phone}", f"loginip:{ip}"
+        if (ratelimit.is_blocked(phone_key, config.LOGIN_FAIL_LIMIT_PHONE, config.LOGIN_FAIL_WINDOW_SECONDS)
+                or ratelimit.is_blocked(ip_key, config.LOGIN_FAIL_LIMIT_IP, config.LOGIN_FAIL_WINDOW_SECONDS)):
+            raise LantaiError("RATE_LIMITED", "尝试次数过多，请稍后再试")
         user = db.scalar(select(User).where(User.phone == body.phone))
+        if user is None:
+            auth.burn_password_check(body.password)
         if user is None or not auth.verify_password(body.password, user.password_hash):
+            ratelimit.record(phone_key)
+            ratelimit.record(ip_key)
             raise LantaiError("AUTH_INVALID", "手机号或密码错误")
+        ratelimit.clear(phone_key)
+        idempotency.purge_expired(db)  # 惰性清理：过期幂等记录与过期事件
+        events.purge_old(db)
+        if auth.needs_rehash(user.password_hash):
+            user.password_hash = auth.hash_password(body.password)
         if user.status != "active":
             raise LantaiError("USER_FROZEN", "用户已被冻结")
         ctx.user_id = user.id
@@ -40,12 +54,18 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/logout")
-def logout(request: Request, p: Principal = READ, db: Session = Depends(get_db)):
+def logout(request: Request, revoke_grants: bool = False, p: Principal = READ, db: Session = Depends(get_db)):
+    """revoke_grants=true 时同时撤销该用户全部未过期的 Agent 令牌。"""
     ctx = make_ctx(request, db, p)
 
     def run():
-        p.token.revoked_at = clock.now()
-        audit.log(ctx, "logout")
+        now = clock.now()
+        p.token.revoked_at = now
+        if revoke_grants:
+            for t in db.scalars(select(AuthToken).where(AuthToken.user_id == p.user.id, AuthToken.kind == "agent_token",
+                                                        AuthToken.revoked_at.is_(None))):
+                t.revoked_at = now
+        audit.log(ctx, "logout", detail={"revoke_grants": revoke_grants})
         return {"logged_out": True}
 
     return ok(request, audit.guarded(ctx, "logout", run))

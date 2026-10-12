@@ -10,11 +10,12 @@ from fastapi import Depends, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import clock
+from app import clock, config
 from app.db import get_db
 from app.errors import LantaiError
 from app.models import AuthToken, User
 from app.money import new_id
+from app.security import ratelimit
 from app.services import audit, deposit
 
 USER_SCOPES = ["read", "prepare", "protect", "confirm", "otp", "grant"]
@@ -36,15 +37,39 @@ class Principal:
         return "agent" if self.token.kind == "agent_token" else "user"
 
 
-def hash_password(password: str, salt: str | None = None) -> str:
-    salt = salt or os.urandom(8).hex()
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 10_000).hex()
-    return f"{salt}${digest}"
+LEGACY_ITERATIONS = 10_000  # 旧格式 "salt$digest" 的迭代次数
+
+
+def hash_password(password: str, salt: str | None = None, iterations: int | None = None) -> str:
+    """新格式 pbkdf2$迭代次数$盐$摘要；盐 16 字节随机。"""
+    salt = salt or os.urandom(16).hex()
+    n = iterations or config.PASSWORD_ITERATIONS
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), n).hex()
+    return f"pbkdf2${n}${salt}${digest}"
 
 
 def verify_password(password: str, stored: str) -> bool:
-    salt, _ = stored.split("$", 1)
-    return hmac.compare_digest(hash_password(password, salt), stored)
+    if stored.startswith("pbkdf2$"):
+        _, n, salt, _ = stored.split("$", 3)
+        return hmac.compare_digest(hash_password(password, salt, int(n)), stored)
+    salt, digest = stored.split("$", 1)  # 旧格式
+    legacy = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), LEGACY_ITERATIONS).hex()
+    return hmac.compare_digest(legacy, digest)
+
+
+def needs_rehash(stored: str) -> bool:
+    return not stored.startswith(f"pbkdf2${config.PASSWORD_ITERATIONS}$")
+
+
+# 用户不存在时也做一次等价哈希，消除时序差（延迟计算，避免导入期开销）
+_DUMMY: str | None = None
+
+
+def burn_password_check(password: str) -> None:
+    global _DUMMY
+    if _DUMMY is None:
+        _DUMMY = hash_password("dummy-password")
+    verify_password(password, _DUMMY)
 
 
 def _hash_token(token: str) -> str:
@@ -67,7 +92,7 @@ def issue_token(db: Session, kind: str, user_id: str, scopes: list[str], ttl_sec
 def _deny(db: Session, request: Request, code: str, message: str, user_id: str | None = None,
           actor: str = "agent") -> LantaiError:
     ctx = audit.Ctx(db, getattr(request.state, "request_id", ""), user_id, actor,
-                    "ui" if request.url.path.startswith("/ui") else "api")
+                    "ui" if request.url.path.startswith("/ui") else "api", **client_info(request))
     audit.log(ctx, f"access_denied {request.method} {request.url.path}", "rejected", error_code=code,
               detail={"message": message})
     db.commit()
@@ -98,6 +123,7 @@ def require(scope: str | None = None, ui_only: bool = False):
         user = db.get(User, row.user_id)
         if user is None or user.status != "active":
             raise _deny(db, request, "USER_FROZEN", "用户已被冻结", row.user_id, actor)
+        ratelimit.check(f"tok:{row.id}", config.TOKEN_RATE_LIMIT, config.TOKEN_RATE_WINDOW)
         if deposit.settle_matured(db, user.id, clock.now()):
             db.commit()  # 到期定期兑付入账
         return Principal(user=user, token=row, scopes=scopes)
@@ -105,9 +131,13 @@ def require(scope: str | None = None, ui_only: bool = False):
     return dependency
 
 
+def client_info(request: Request) -> dict:
+    return {"ip": request.client.host if request.client else None, "ua": request.headers.get("user-agent")}
+
+
 def make_ctx(request: Request, db: Session, p: Principal, agent_intent: str | None = None) -> audit.Ctx:
     return audit.Ctx(db, request.state.request_id, p.user.id, p.actor,
-                     "ui" if request.url.path.startswith("/ui") else "api", agent_intent)
+                     "ui" if request.url.path.startswith("/ui") else "api", agent_intent, **client_info(request))
 
 
 def expired(dt: datetime) -> bool:

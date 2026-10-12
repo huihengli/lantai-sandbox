@@ -1,26 +1,29 @@
 """模拟 OTP：验证码只通过用户通道（/ui）展示，Agent 通道任何响应都不含。"""
 import hashlib
+import hmac
 import secrets
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app import clock, config
 from app.errors import LantaiError
 from app.models import OtpChallenge, PendingOperation
 from app.money import new_id
+from app.security import ratelimit
 from app.services import audit, events
 
 
 def _hash(op_id: str, code: str) -> str:
-    return hashlib.sha256(f"{op_id}:{code}".encode()).hexdigest()
+    return hmac.new(config.OTP_PEPPER.encode(), f"{op_id}:{code}".encode(), hashlib.sha256).hexdigest()
 
 
 def issue(db: Session, op: PendingOperation) -> OtpChallenge:
     code = config.OTP_FIXED_CODE or f"{secrets.randbelow(10**6):06d}"
     ch = OtpChallenge(
-        id=new_id("otp"), operation_id=op.id, code_hash=_hash(op.id, code), demo_code=code,
+        id=new_id("otp"), operation_id=op.id, code_hash=_hash(op.id, code),
+        demo_code=code if config.OTP_DEMO_MODE else "",  # 非演示模式不存明文
         max_attempts=config.OTP_MAX_ATTEMPTS, status="issued",
         expires_at=clock.now() + timedelta(seconds=config.OPERATION_TTL_SECONDS),
     )
@@ -43,13 +46,19 @@ def verify(ctx: audit.Ctx, op: PendingOperation, code: str) -> None:
     if ch.expires_at <= clock.now():
         ch.status = "expired"
         raise LantaiError("OTP_EXPIRED", "OTP 已过期，请重新发起操作")
-    if _hash(op.id, code) == ch.code_hash:
+    fail_key = f"otp:{op.user_id}"
+    if ratelimit.is_blocked(fail_key, config.OTP_USER_FAIL_LIMIT, config.OTP_USER_FAIL_WINDOW):
+        raise LantaiError("RATE_LIMITED", "验证码错误次数过多，请稍后再试")
+    if hmac.compare_digest(_hash(op.id, code), ch.code_hash):
         ch.status = "verified"
         op.status = "OTP_VERIFIED"
         events.emit(db, op.user_id, "operation", op.id, {"operation_id": op.id, "op_type": op.type, "status": op.status})
         audit.log(ctx, "otp_verify", operation_id=op.id)
         return
-    ch.attempts += 1
+    ratelimit.record(fail_key)
+    db.execute(update(OtpChallenge).where(OtpChallenge.id == ch.id).values(attempts=OtpChallenge.attempts + 1)
+               .execution_options(synchronize_session=False))  # 原子自增，防并发少计
+    db.refresh(ch)
     left = ch.max_attempts - ch.attempts
     if left <= 0:
         ch.status = "locked"

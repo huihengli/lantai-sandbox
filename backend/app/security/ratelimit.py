@@ -19,5 +19,21 @@ def check(key: str, limit: int, window_seconds: int) -> None:
     _hits[key] = recent
 
 
+def is_blocked(key: str, limit: int, window_seconds: int) -> bool:
+    """仅查询：窗口内累计的失败次数是否已达上限（不计数）。"""
+    now = _ts()
+    recent = [t for t in _hits.get(key, []) if now - t < window_seconds]
+    _hits[key] = recent
+    return len(recent) >= limit
+
+
+def record(key: str) -> None:
+    _hits.setdefault(key, []).append(_ts())
+
+
+def clear(key: str) -> None:
+    _hits.pop(key, None)
+
+
 def reset() -> None:
     _hits.clear()
