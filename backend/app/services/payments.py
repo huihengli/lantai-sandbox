@@ -45,8 +45,7 @@ def build_plan(db: Session, user: User, params: dict, now, lock: bool = False) -
         raise LantaiError("ORDER_ALREADY_PAID", "该订单号已向此商户支付过", {"order_ref": params["order_ref"]})
     avail = acct.available_cents(db, acc)
     if avail < amount:
-        raise LantaiError("INSUFFICIENT_BALANCE", "可用余额不足" if avail < acc.balance_cents else "余额不足",
-                          {"balance": fmt(acc.balance_cents), "available": fmt(avail)})
+        raise LantaiError("INSUFFICIENT_BALANCE", "余额不足")
 
     card_today = int(db.scalar(select(func.coalesce(func.sum(Transaction.amount_cents), 0)).where(
         Transaction.card_id == card.id, Transaction.direction == "out",

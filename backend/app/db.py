@@ -59,5 +59,6 @@ def schema_problems(eng: Engine | None = None) -> list[str]:
     return problems
 
 
-def drop_tables() -> None:
-    Base.metadata.drop_all(engine)
+def drop_tables(keep_audit: bool = False) -> None:
+    tables = [t for t in Base.metadata.sorted_tables if not (keep_audit and t.name == "audit_logs")]
+    Base.metadata.drop_all(engine, tables=tables)

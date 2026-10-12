@@ -4,7 +4,7 @@
 import re
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app import clock
@@ -85,8 +85,7 @@ def build_subscribe_plan(db: Session, user: User, params: dict, now, lock: bool 
         raise LantaiError("AMOUNT_BELOW_MIN", f"低于起购额 {fmt(prod.min_amount_cents)} 元")
     avail = acct.available_cents(db, acc)
     if avail < amount:
-        raise LantaiError("INSUFFICIENT_BALANCE", "可用余额不足" if avail < acc.balance_cents else "余额不足",
-                          {"balance": fmt(acc.balance_cents), "available": fmt(avail)})
+        raise LantaiError("INSUFFICIENT_BALANCE", "余额不足")
     level, status = risk_profile.current(user, now)
     change = {"product": {"name": prod.name, "risk_level": prod.risk_level}, "user_level": level,
               "level_status": status, "user_label": risk_profile.LABELS.get(user.risk_level)}
@@ -158,11 +157,17 @@ def build_redeem_plan(db: Session, user: User, params: dict, now, lock: bool = F
 def execute_redeem(db: Session, op, plan: Plan, now) -> dict:
     acc, h = plan.data["account"], plan.data["holding"]
     sell, value, cost_part = plan.data["sell"], plan.data["value"], plan.data["cost_part"]
+    # 条件扣减份额：并发重复赎回时 rowcount!=1，整笔回滚，避免重复入账
+    res = db.execute(update(WealthHolding).where(WealthHolding.id == h.id, WealthHolding.status == "active",
+                                                 WealthHolding.shares_c >= sell)
+                     .values(shares_c=WealthHolding.shares_c - sell, cost_cents=WealthHolding.cost_cents - cost_part)
+                     .execution_options(synchronize_session=False))
+    if res.rowcount != 1:
+        raise LantaiError("HOLDING_NOT_ACTIVE", "该持仓已全部赎回或份额不足")
+    db.refresh(h)
     acct.credit(db, acc, value)
     txn = acct.add_txn(db, acc, "in", "wealth_in", value, now, counterparty=h.product.name, memo="理财赎回",
                        operation_id=op.id, merchant_category="理财")
-    h.shares_c -= sell
-    h.cost_cents -= cost_part
     if h.shares_c == 0:
         h.status, h.closed_at = "closed", now
     return {"holding_id": h.id, "transaction_id": txn.id, "amount": fmt(value), "pnl": fmt(value - cost_part),

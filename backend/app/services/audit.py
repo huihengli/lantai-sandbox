@@ -21,10 +21,14 @@ class Ctx:
     actor: str  # agent / user / system / admin
     channel: str  # api / ui / admin
     agent_intent: str | None = None
+    ip: str | None = None
+    ua: str | None = None
 
 
 def log(ctx: Ctx, action: str, result: str = "ok", operation_id: str | None = None,
         risk: dict | None = None, error_code: str | None = None, detail: dict | None = None) -> None:
+    if ctx.ip or ctx.ua:  # 来源信息放入 detail，避免改表结构
+        detail = {**(detail or {}), "client": {"ip": ctx.ip, "ua": (ctx.ua or "")[:120]}}
     ctx.db.add(AuditLog(
         ts=clock.now(), user_id=ctx.user_id, actor=ctx.actor, channel=ctx.channel,
         action=action, operation_id=operation_id, agent_intent=ctx.agent_intent,

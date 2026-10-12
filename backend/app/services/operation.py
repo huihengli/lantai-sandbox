@@ -3,14 +3,14 @@ import hashlib
 import json
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app import clock, config
 from app.errors import LantaiError
 from app.models import PendingOperation, User
 from app.money import new_id
-from app.security import otp
+from app.security import otp, ratelimit
 from app.services import audit, cards, events, deposit, holds, idempotency, mandates, payments, transfer, wealth
 
 ACTIVE = {"PREPARED", "OTP_PENDING", "OTP_VERIFIED"}
@@ -45,7 +45,30 @@ def params_hash(params: dict) -> str:
     return hashlib.sha256(json.dumps(params, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
-def view(op: PendingOperation) -> dict:
+# Agent 通道不得经风控文案反推余额/当日累计/自动扣款明细（这些需 read 权限与用户界面才能看）
+_AGENT_NEUTRAL = {
+    "DAILY_LIMIT_EXCEEDED": ("超过账户单日累计转出限额", "告知用户今日额度已不足，建议明日再试"),
+    "CARD_LIMIT_EXCEEDED": ("超过卡片额度限制", "建议用户在确认中心查看额度，分日或提额（需验证）"),
+    "AUTOPAY_AT_RISK": ("转出后余额可能不足以覆盖近期自动扣款", "提醒用户到界面查看扣款计划"),
+}
+_AGENT_STRIP = ("balance_after",)
+
+
+def _agent_view(out: dict) -> dict:
+    """按 Agent 通道裁剪：去掉余额类字段，敏感风控原因改为中性文案并清空 params。"""
+    out["summary"] = {k: v for k, v in out["summary"].items() if k not in _AGENT_STRIP}
+    if "result" in out and isinstance(out["result"], dict):
+        out["result"] = {k: v for k, v in out["result"].items() if k not in _AGENT_STRIP}
+    reasons = []
+    for r in out["risk"].get("reasons", []):
+        if r["code"] in _AGENT_NEUTRAL:
+            r = {**r, "message": _AGENT_NEUTRAL[r["code"]][0], "agent_hint": _AGENT_NEUTRAL[r["code"]][1], "params": {}}
+        reasons.append(r)
+    out["risk"] = {**out["risk"], "reasons": reasons}
+    return out
+
+
+def view(op: PendingOperation, actor: str = "user") -> dict:
     out = {
         "operation_id": op.id, "type": op.type, "status": op.status, "initiator": op.initiator,
         "summary": json.loads(op.summary_json), "risk": json.loads(op.risk_json),
@@ -56,7 +79,7 @@ def view(op: PendingOperation) -> dict:
         out["confirm_url"] = f"{config.FRONTEND_BASE_URL}/confirm/{op.id}"
     if op.result_json:
         out["result"] = json.loads(op.result_json)
-    return out
+    return _agent_view(out) if actor == "agent" else out
 
 
 def emit_status(db: Session, op: PendingOperation) -> None:
@@ -97,6 +120,12 @@ def prepare(ctx: audit.Ctx, user: User, op_type: str, body, idem_key: str | None
         return cached
 
     now = clock.now()
+    active = db.scalar(select(func.count()).select_from(PendingOperation).where(
+        PendingOperation.user_id == user.id, PendingOperation.status.in_(ACTIVE), PendingOperation.expires_at > now))
+    if active >= config.MAX_ACTIVE_OPERATIONS:
+        raise LantaiError("TOO_MANY_PENDING", "待处理的操作过多，请先确认、取消或等待过期")
+    if op_type == "transfer":
+        ratelimit.check(f"probe:{user.id}", config.PREPARE_PROBE_LIMIT, config.PREPARE_PROBE_WINDOW)
     params = NORMALIZE[op_type](db, user, body)
     plan = BUILD[op_type](db, user, params, now)
     risk = plan.risk
@@ -115,8 +144,9 @@ def prepare(ctx: audit.Ctx, user: User, op_type: str, body, idem_key: str | None
     emit_status(db, op)
     audit.log(ctx, f"prepare:{op_type}", "blocked" if status == "BLOCKED" else "ok", op.id, risk,
               detail={"summary": plan.summary})
-    out = view(op)
-    idempotency.store(db, idem_key, user.id, endpoint, req_hash, out)
+    out = view(op, ctx.actor)
+    if not idempotency.store(db, idem_key, user.id, endpoint, req_hash, out):
+        return idempotency.lookup(db, idem_key, user.id, endpoint, req_hash) or out
     return out
 
 
@@ -129,11 +159,19 @@ def _fail(db: Session, op_id: str, exc: LantaiError) -> None:
     db.commit()
 
 
+def _lock_op(db: Session, op: PendingOperation) -> None:
+    """对操作行加写锁（条件空更新）并重读状态，使「检查状态 → 执行」在同一把锁内完成，防并发重复执行。"""
+    db.execute(update(PendingOperation).where(PendingOperation.id == op.id, PendingOperation.status.in_(ACTIVE))
+               .values(status=PendingOperation.status).execution_options(synchronize_session=False))
+    db.refresh(op)
+
+
 def confirm(ctx: audit.Ctx, user: User, op_id: str) -> dict:
     db = ctx.db
     op = get_op(db, user.id, op_id)
+    _lock_op(db, op)
     if op.status == "EXECUTED":
-        return view(op)
+        return view(op, ctx.actor)
     if op.status == "EXPIRED":
         raise LantaiError("OPERATION_EXPIRED", "操作已过期，请重新发起")
     if op.status == "BLOCKED":
@@ -142,9 +180,7 @@ def confirm(ctx: audit.Ctx, user: User, op_id: str) -> dict:
         raise LantaiError("OTP_LOCKED", "OTP 已锁定，请重新发起操作")
     if op.status not in ACTIVE:
         raise LantaiError("OPERATION_STATE_INVALID", f"当前状态 {op.status} 不可确认")
-    params = json.loads(op.params_json)
-    if params_hash(params) != op.params_hash:
-        raise LantaiError("PARAMS_TAMPERED", "操作参数与预处理时不一致")
+    params = json.loads(op.params_json)  # confirm 不接受任何新参数，TOCTOU 由此保证；params_hash 仅作留痕
 
     now = clock.now()
     try:
@@ -176,13 +212,13 @@ def confirm(ctx: audit.Ctx, user: User, op_id: str) -> dict:
     emit_status(db, op)
     op.result_json = json.dumps(result, ensure_ascii=False)
     audit.log(ctx, f"confirm:{op.type}", operation_id=op.id, risk=risk, detail=result)
-    return view(op)
+    return view(op, ctx.actor)
 
 
 def verify_otp(ctx: audit.Ctx, user: User, op_id: str, code: str) -> dict:
     op = get_op(ctx.db, user.id, op_id)
     if op.status == "OTP_VERIFIED":
-        return view(op)
+        return view(op, ctx.actor)
     if op.status == "EXPIRED":
         raise LantaiError("OPERATION_EXPIRED", "操作已过期，请重新发起")
     if op.status == "OTP_LOCKED":
@@ -190,10 +226,12 @@ def verify_otp(ctx: audit.Ctx, user: User, op_id: str, code: str) -> dict:
     if op.status != "OTP_PENDING":
         raise LantaiError("OPERATION_STATE_INVALID", f"当前状态 {op.status} 无需验证 OTP")
     otp.verify(ctx, op, code)
-    return view(op)
+    return view(op, ctx.actor)
 
 
 def otp_hint(db: Session, user: User, op_id: str) -> dict:
+    if not config.OTP_DEMO_MODE:
+        raise LantaiError("NOT_FOUND", "接口不存在")
     op = get_op(db, user.id, op_id)
     ch = otp.latest(db, op.id)
     if op.status != "OTP_PENDING" or ch is None:
@@ -204,11 +242,12 @@ def otp_hint(db: Session, user: User, op_id: str) -> dict:
 
 def cancel(ctx: audit.Ctx, user: User, op_id: str, action: str) -> dict:
     op = get_op(ctx.db, user.id, op_id)
+    _lock_op(ctx.db, op)
     if op.status == "CANCELLED":
-        return view(op)
+        return view(op, ctx.actor)
     if op.status not in ACTIVE:
         raise LantaiError("OPERATION_STATE_INVALID", f"当前状态 {op.status} 不可取消")
     op.status = "CANCELLED"
     emit_status(ctx.db, op)
     audit.log(ctx, action, operation_id=op.id)
-    return view(op)
+    return view(op, ctx.actor)

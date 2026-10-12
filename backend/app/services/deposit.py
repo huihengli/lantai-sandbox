@@ -3,7 +3,7 @@ import calendar
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app import clock
@@ -70,8 +70,7 @@ def build_create_plan(db: Session, user: User, params: dict, now, lock: bool = F
         raise LantaiError("AMOUNT_ABOVE_MAX", f"高于限额 {fmt(prod.max_amount_cents)} 元")
     avail = acct.available_cents(db, acc)
     if avail < amount:
-        raise LantaiError("INSUFFICIENT_BALANCE", "可用余额不足" if avail < acc.balance_cents else "余额不足",
-                          {"balance": fmt(acc.balance_cents), "available": fmt(avail)})
+        raise LantaiError("INSUFFICIENT_BALANCE", "余额不足")
     start = clock.local(now).date()
     summary = {"from": f"{acct.TYPE_LABEL.get(acc.type, acc.type)} {mask(acc.account_no)}",
                "product": prod.name, "term_months": prod.term_months,
@@ -127,8 +126,19 @@ def build_early_plan(db: Session, user: User, params: dict, now, lock: bool = Fa
                 {"account": acc, "holding": h, "interest": early})
 
 
+def _claim(db: Session, h: DepositHolding, status: str, now, interest: int) -> None:
+    """原子认领：仅 holding 状态可迁出，rowcount!=1 说明已被并发结算/支取，防止重复入账。"""
+    res = db.execute(update(DepositHolding).where(DepositHolding.id == h.id, DepositHolding.status == "holding")
+                     .values(status=status, closed_at=now, interest_paid_cents=interest)
+                     .execution_options(synchronize_session=False))
+    if res.rowcount != 1:
+        raise LantaiError("HOLDING_NOT_ACTIVE", "该定期已结束")
+    db.refresh(h)
+
+
 def execute_early(db: Session, op, plan: Plan, now) -> dict:
     acc, h, interest = plan.data["account"], plan.data["holding"], plan.data["interest"]
+    _claim(db, h, "withdrawn_early", now, interest)
     acct.credit(db, acc, h.principal_cents)
     acct.add_txn(db, acc, "in", "deposit_in", h.principal_cents, now, counterparty=h.product.name,
                  memo="提前支取本金", operation_id=op.id)
@@ -136,7 +146,6 @@ def execute_early(db: Session, op, plan: Plan, now) -> dict:
         acct.credit(db, acc, interest)
         acct.add_txn(db, acc, "in", "interest", interest, now, counterparty=h.product.name,
                      memo="提前支取利息", operation_id=op.id)
-    h.status, h.closed_at, h.interest_paid_cents = "withdrawn_early", now, interest
     return {"holding_id": h.id, "principal": fmt(h.principal_cents), "interest": fmt(interest),
             "balance_after": fmt(acc.balance_cents), "executed_at": clock.iso(now)}
 
@@ -146,16 +155,21 @@ def settle_matured(db: Session, user_id: str, now) -> int:
     today = clock.local(now).date()
     due = list(db.scalars(select(DepositHolding).where(
         DepositHolding.user_id == user_id, DepositHolding.status == "holding", DepositHolding.maturity_date <= today)))
+    settled = 0
     for h in due:
-        acc = db.get(acct.Account, h.account_id)
         interest = maturity_interest(h.principal_cents, h.product)
+        try:
+            _claim(db, h, "matured", now, interest)
+        except LantaiError:
+            continue  # 已被并发请求结算
+        acc = db.get(acct.Account, h.account_id)
         acct.credit(db, acc, h.principal_cents)
         acct.add_txn(db, acc, "in", "deposit_in", h.principal_cents, now, counterparty=h.product.name, memo="到期兑付本金")
         if interest > 0:
             acct.credit(db, acc, interest)
             acct.add_txn(db, acc, "in", "interest", interest, now, counterparty=h.product.name, memo="到期利息")
-        h.status, h.closed_at, h.interest_paid_cents = "matured", now, interest
+        settled += 1
         events.emit(db, user_id, "deposit", h.id, {"holding_id": h.id, "status": "matured",
                                                    "principal": fmt(h.principal_cents), "interest": fmt(interest)})
     db.flush()
-    return len(due)
+    return settled

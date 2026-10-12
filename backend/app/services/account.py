@@ -52,7 +52,7 @@ def debit(db: Session, acc: Account, cents: int) -> None:
                      .values(balance_cents=Account.balance_cents - cents)
                      .execution_options(synchronize_session=False))
     if res.rowcount != 1:
-        raise LantaiError("INSUFFICIENT_BALANCE", "可用余额不足" if held else "余额不足", {"held": held / 100})
+        raise LantaiError("INSUFFICIENT_BALANCE", "余额不足")
     db.refresh(acc)
 
 
@@ -77,5 +77,5 @@ def add_txn(db: Session, acc: Account, direction: str, category: str, amount: in
     events.emit(db, acc.user_id, "txn_in" if direction == "in" else "txn_out", txn.id, {
         "account_id": acc.id, "category": category, "amount": f"{amount // 100}.{amount % 100:02d}",
         "counterparty": counterparty, "memo": memo, "merchant_category": merchant_category,
-        "balance_after": f"{acc.balance_cents // 100}.{acc.balance_cents % 100:02d}", "operation_id": operation_id})
+        "operation_id": operation_id})
     return txn

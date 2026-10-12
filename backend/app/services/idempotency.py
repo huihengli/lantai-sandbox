@@ -2,6 +2,8 @@ import hashlib
 import json
 from datetime import timedelta
 
+from sqlalchemy import delete
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import clock, config
@@ -27,8 +29,21 @@ def lookup(db: Session, key: str | None, user_id: str, endpoint: str, req_hash: 
     return json.loads(rec.response_json)
 
 
-def store(db: Session, key: str | None, user_id: str, endpoint: str, req_hash: str, response: dict) -> None:
-    if key:
-        db.add(IdempotencyRecord(key=key, user_id=user_id, endpoint=endpoint, request_hash=req_hash,
-                                 response_json=json.dumps(response, ensure_ascii=False),
-                                 created_at=clock.now()))
+def store(db: Session, key: str | None, user_id: str, endpoint: str, req_hash: str, response: dict) -> bool:
+    """False 表示并发请求已抢先写入同一幂等键（调用方应回滚并返回首次响应）。"""
+    if not key:
+        return True
+    db.add(IdempotencyRecord(key=key, user_id=user_id, endpoint=endpoint, request_hash=req_hash,
+                             response_json=json.dumps(response, ensure_ascii=False), created_at=clock.now()))
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        return False
+    return True
+
+
+def purge_expired(db: Session) -> None:
+    """惰性清理过期幂等记录。"""
+    db.execute(delete(IdempotencyRecord).where(
+        IdempotencyRecord.created_at < clock.now() - timedelta(seconds=config.IDEMPOTENCY_TTL_SECONDS)))

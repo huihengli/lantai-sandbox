@@ -74,7 +74,7 @@ def create(ctx: audit.Ctx, user: User, account_id: str, body) -> dict:
         raise LantaiError("HOLD_LIMIT_REACHED", f"每个账户最多同时预留 {config.HOLD_MAX_ACTIVE} 笔")
     avail = acct.available_cents(db, acc)
     if cents > avail:
-        raise LantaiError("INSUFFICIENT_BALANCE", "可用余额不足以预留该金额", {"available": fmt(avail)})
+        raise LantaiError("INSUFFICIENT_BALANCE", "余额不足以预留该金额")
     h = Hold(id=new_id("hol"), user_id=user.id, account_id=acc.id, amount_cents=cents,
              purpose=(body.purpose or "资金预留")[:60], status="active", expires_at=expires,
              created_at=clock.now(), created_by=ctx.actor)
@@ -82,7 +82,7 @@ def create(ctx: audit.Ctx, user: User, account_id: str, body) -> dict:
     db.flush()
     events.emit(db, user.id, "hold", h.id, {"hold_id": h.id, "status": "active", "amount": fmt(cents), "purpose": h.purpose})
     audit.log(ctx, "hold_create", detail={"hold_id": h.id, "amount": fmt(cents), "purpose": h.purpose})
-    return {"hold": view(h), "available_after": fmt(avail - cents)}
+    return {"hold": view(h)}
 
 
 # ---- 释放（prepare → 确认）----

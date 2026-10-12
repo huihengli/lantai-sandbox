@@ -1,7 +1,7 @@
 """风控引擎：构建一次上下文，跑完全部适用规则（不短路），取最高级别。"""
 from datetime import timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app import clock, config
@@ -20,7 +20,8 @@ def build_context(db: Session, user_id: str, account: Account, op_type: str, amo
         Transaction.account_id.in_(select(Account.id).where(Account.user_id == user_id))
     today_out = db.scalar(select(func.coalesce(func.sum(Transaction.amount_cents), 0)).where(
         Transaction.account_id == account.id, Transaction.direction == "out",
-        Transaction.category == "transfer", Transaction.occurred_at >= clock.local_day_start_utc(now)))
+        or_(Transaction.category == "transfer", Transaction.card_id.is_not(None)),  # 含卡片/商户支付，防绕过日限额
+        Transaction.occurred_at >= clock.local_day_start_utc(now)))
     recent = db.scalar(select(func.count()).select_from(Transaction).where(
         out_of_user, Transaction.occurred_at >= now - timedelta(seconds=config.RAPID_WINDOW_SECONDS)))
     today = clock.local(now).date()

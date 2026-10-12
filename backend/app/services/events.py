@@ -2,10 +2,12 @@
 银行不推送、不调度；提醒、对账、定时触发全部由 Agent 基于此实现。"""
 import json
 
-from sqlalchemy import select
+from datetime import timedelta
+
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app import clock
+from app import clock, config
 from app.models import Event
 
 MAX_PAGE = 200
@@ -14,6 +16,10 @@ MAX_PAGE = 200
 def emit(db: Session, user_id: str, type_: str, ref_id: str | None, data: dict) -> None:
     db.add(Event(ts=clock.now(), user_id=user_id, type=type_, ref_id=ref_id,
                  data_json=json.dumps(data, ensure_ascii=False)))
+
+
+def purge_old(db: Session) -> None:
+    db.execute(delete(Event).where(Event.ts < clock.now() - timedelta(days=config.EVENT_RETENTION_DAYS)))
 
 
 def view(e: Event) -> dict:

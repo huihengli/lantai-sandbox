@@ -68,16 +68,14 @@ def build_plan(db: Session, user: User, params: dict, now, lock: bool = False) -
         raise LantaiError("SAME_ACCOUNT", "不能转给同一账户")
     avail = acct.available_cents(db, acc)
     if avail < amount + fee:
-        raise LantaiError("INSUFFICIENT_BALANCE", "可用余额不足" if avail < acc.balance_cents else "余额不足",
-                          {"balance": fmt(acc.balance_cents), "available": fmt(avail)})
+        raise LantaiError("INSUFFICIENT_BALANCE", "余额不足")
 
     own_target = target is not None and target.user_id == user.id
     payee_row = db.get(Payee, payee["payee_id"]) if payee["payee_id"] else None
     is_new = not own_target and (payee_row is None or payee_row.first_paid_at is None)
     name_mismatch = (target is not None and not own_target and payee_row is None
                      and target.user.name != payee["name"])
-    hit = db.scalar(select(Blacklist.id).where(Blacklist.account_no == payee["account_no"],
-                                               Blacklist.bank_code == bank)) is not None
+    hit = db.scalar(select(Blacklist.id).where(Blacklist.account_no == payee["account_no"])) is not None  # 不限银行，防换行绕过
 
     rctx = engine.build_context(db, user.id, acc, "transfer", amount, now, fee_cents=fee,
                                 is_new_payee=is_new, blacklist_hit=hit, name_mismatch=name_mismatch,

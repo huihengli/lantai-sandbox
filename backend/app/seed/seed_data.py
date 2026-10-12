@@ -96,7 +96,7 @@ def _history(db_, now) -> None:
 def seed() -> None:
     now = clock.now()
     today = clock.local(now).date()
-    pwd = hash_password(PASSWORD)
+    pwd = hash_password(config.SEED_PASSWORD)
     with db.SessionLocal() as s:
         for uid, name, phone in USERS:
             s.add(User(id=uid, name=name, phone=phone, phone_masked=phone[:3] + "****" + phone[-4:],
@@ -167,7 +167,8 @@ def seed() -> None:
         s.commit()
 
 
-def reset_database() -> None:
-    db.drop_tables()
+def reset_database(keep_audit: bool = False) -> None:
+    """keep_audit=True：演示重置时保留审计表（审计只增不删）。"""
+    db.drop_tables(keep_audit)
     db.create_tables()
     seed()

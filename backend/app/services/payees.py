@@ -2,10 +2,10 @@
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app import clock
+from app import clock, config
 from app.errors import LantaiError
 from app.models import HOME_BANK, Account, Blacklist, Payee, User
-from app.money import mask, new_id
+from app.money import like_escape, mask, new_id
 from app.security import ratelimit
 from app.services import audit
 
@@ -25,8 +25,9 @@ def mask_name(name: str) -> str:
 def list_payees(db: Session, user_id: str, q: str | None = None) -> list[Payee]:
     stmt = select(Payee).where(Payee.user_id == user_id, Payee.status == "active")
     if q:
-        like = f"%{q}%"
-        stmt = stmt.where(or_(Payee.name.ilike(like), Payee.alias.ilike(like), Payee.account_no.like(f"%{q}")))
+        esc = like_escape(q)
+        stmt = stmt.where(or_(Payee.name.ilike(f"%{esc}%", escape="\\"), Payee.alias.ilike(f"%{esc}%", escape="\\"),
+                              Payee.account_no.like(f"%{esc}", escape="\\")))
     return list(db.scalars(stmt.order_by(Payee.name)))
 
 
@@ -39,20 +40,23 @@ def _owned(db: Session, user_id: str, payee_id: str) -> Payee:
 
 def add(ctx: audit.Ctx, user: User, body) -> dict:
     db = ctx.db
+    ratelimit.check(f"payee_add:{user.id}", config.PAYEE_ADD_LIMIT, config.PAYEE_ADD_WINDOW)
     bank = body.bank_code or HOME_BANK
+    # 账户不存在 / 户名不符 / 命中黑名单 对外统一为同一错误，避免探测
+    unavailable = LantaiError("PAYEE_NOT_FOUND", "无法添加该收款人，请核对账号与户名")
     if bank == HOME_BANK:
         target = db.scalar(select(Account).where(Account.account_no == body.account_no, Account.bank_code == HOME_BANK))
         if target is None or target.status != "active":
-            raise LantaiError("PAYEE_NOT_FOUND", "收款账户不存在或不可用")
+            raise unavailable
         if target.user_id == user.id:
             raise LantaiError("SAME_ACCOUNT", "本人账户无需添加为收款人")
         if target.user.name != body.name:
-            raise LantaiError("PAYEE_NAME_MISMATCH", "户名与该账户实际户名不一致")
+            raise unavailable
         bank_name = "澜台"
     else:
         bank_name = body.bank_name or "他行"
-    if db.scalar(select(Blacklist.id).where(Blacklist.account_no == body.account_no, Blacklist.bank_code == bank)):
-        raise LantaiError("RISK_BLOCKED", "该账户已被列入涉诈风险名单，无法添加")
+    if db.scalar(select(Blacklist.id).where(Blacklist.account_no == body.account_no)):
+        raise unavailable
 
     row = db.scalar(select(Payee).where(Payee.user_id == user.id, Payee.account_no == body.account_no,
                                         Payee.bank_code == bank))

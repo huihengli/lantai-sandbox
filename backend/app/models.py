@@ -1,6 +1,7 @@
 """数据表定义。金额一律为整数分；时间为 naive UTC。"""
 from datetime import date, datetime
 
+from sqlalchemy import event
 from sqlalchemy import (BigInteger, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index,
                         Integer, String, Text, UniqueConstraint)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -202,6 +203,12 @@ class AuditLog(Base):
     error_code: Mapped[str | None] = mapped_column(String(40), nullable=True)
     detail_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     request_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+
+@event.listens_for(AuditLog, "before_update")
+@event.listens_for(AuditLog, "before_delete")
+def _audit_append_only(*_):  # 审计只增不改不删（演示重置走表级重建，不经过 ORM）
+    raise RuntimeError("审计日志只增不改不删")
 
 
 class Card(Base):

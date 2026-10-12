@@ -31,5 +31,10 @@ def mask(account_no: str) -> str:
     return "****" + account_no[-4:]
 
 
+def like_escape(s: str) -> str:
+    """转义 LIKE 通配符（配合 escape="\\" 使用）。"""
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:10]}"
