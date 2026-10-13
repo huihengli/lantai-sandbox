@@ -1,10 +1,11 @@
 # 澜台 Agent 接口文档（MCP 服务器接入用）
 
-> 生成日期：2026-10-12（安全加固后更新）　版本：与后端 1.0.0 同步（共 44 个 Agent 通道接口）
-> 本文由脚本从运行中的 FastAPI 应用提取接口与请求结构，并补充手写说明生成。接口以服务的 `GET /openapi.json` 为准，本文用于指导 MCP 工具的设计。
+> 更新日期：2026-10-13　版本：与后端 1.0.0 同步（共 44 个 Agent 通道接口），已包含安全加固后的对外行为
+> 本文由脚本从运行中的 FastAPI 应用提取接口与请求结构，并补充手写说明生成。开发环境可对照 `GET /openapi.json`；生产模式该接口默认关闭，以本文为准。本文用于指导 MCP 工具的设计。
 
 ## 目录
 
+- 0. 相对上一版（2026-10-12）的变更
 - 1. 定位与硬性约束
 - 2. 接入与认证
 - 3. 统一响应与错误码
@@ -17,6 +18,23 @@
 - 10. 演示数据速查
 - 11. 不属于 Agent 的接口
 
+## 0. 相对上一版（2026-10-12）的变更
+
+以下变更来自安全加固（并发修复、最小披露、限频、输入校验）。**接口路径、请求结构、scope 均未变**，但响应内容与错误行为有变化，MCP 实现需要对应调整。
+
+| 类别 | 变化 | 对 Agent / MCP 的影响 |
+|---|---|---|
+| 最小披露 | `INSUFFICIENT_BALANCE` 不再带 `balance/available`，文案不再区分“可用余额不足/余额不足” | 需要余额时调用 `get_balance`；不要从错误里解析数字 |
+| 最小披露 | Agent 视图的 `summary`、`result` 不含 `balance_after`；事件流不含余额；`create_hold` 不再返回 `available_after` | 对账改用 `get_balance` 与事件里的金额/流水号 |
+| 最小披露 | `DAILY_LIMIT_EXCEEDED`、`CARD_LIMIT_EXCEEDED`、`AUTOPAY_AT_RISK` 对 Agent 只给中性文案，`params` 为空 | 不要依赖这三个原因里的具体金额；需要时查询余额/代扣协议 |
+| 防探测 | 添加收款人：账户不存在、户名不符、命中黑名单统一返回 `PAYEE_NOT_FOUND` | 不要据此判断具体原因；`PAYEE_NAME_MISMATCH` 不再由添加收款人返回 |
+| 限频与上限 | 新增：每令牌每分钟 300 次、转账预处理/预检每用户 10 分钟 60 次、添加收款人 10 分钟 20 次、同时待处理操作 20 笔、请求体 64 KB | 处理 `RATE_LIMITED`（读 `details.retry_after_seconds`）、`TOO_MANY_PENDING`、HTTP 413 `PAYLOAD_TOO_LARGE` |
+| 输入校验 | 所有字符串字段增加最大长度（见各接口参数表）；`Idempotency-Key` ≤100 字符；LIKE 类过滤（`keyword`/`counterparty`/`q`）中的 `%` `_` 按字面匹配 | 超长返回 `VALIDATION_ERROR` |
+| 风控口径 | 单日转出额度统计纳入卡片/商户支付；黑名单匹配不再限定银行 | `DAILY_LIMIT_EXCEEDED` 可能比以前更早出现 |
+| 并发 | 同一操作并发确认只会执行一次；定期到期与理财赎回并发不再重复入账 | 重复确认返回首次结果，无需额外处理 |
+| 事件 | 事件保留 30 天，过期惰性清理 | 长时间离线后恢复需自行对账 |
+| 环境 | 生产模式（`APP_ENV=prod`）下 `/admin/*`、`/docs`、`/openapi.json`、`/ui/.../otp-hint` 默认关闭，返回 `NOT_FOUND` | 以本文为准，不要依赖在线 OpenAPI |
+
 ## 1. 定位与硬性约束
 
 澜台是**模拟银行**，只提供银行基础能力与硬规则；调度、识别、分析、编排都归 Agent。
@@ -26,6 +44,7 @@
 | 后端不信任 Agent | 限额、黑名单、余额、归属、适当性全部由后端校验；Agent 的意图摘要只写入审计，不参与判定 |
 | Agent 没有确认权 | 所有会动钱或放宽权限的操作只能 `prepare`，确认与 OTP 只能由用户在前端界面完成 |
 | 收紧立即生效，放宽需确认 | 冻结/挂失/关开关/调低额度/创建预留可由 Agent 直接执行；解冻/补发/调高额度/开境外/释放预留必须经用户确认 |
+| 最小披露 | 错误、摘要、结果、事件都不返回调用方未请求的数据；**余额、可用额度、限额只能通过 `get_balance` 读取**（受 `read` 控制） |
 | 只调 `/api/v1/*` | `/ui/*` 与 `/admin/*` 不属于 Agent；Agent 令牌调用 `/ui/*` 会收到 `CHANNEL_NOT_ALLOWED` 并记入审计 |
 
 ## 2. 接入与认证
@@ -42,6 +61,19 @@
 | `protect` | 仅限“收紧”类直接操作（冻结/挂失、关开关、调低额度、创建预留） |
 
 - **数据隔离**：所有资源按令牌所属用户过滤；访问他人资源统一返回 `RESOURCE_NOT_OWNED`（404），不区分“不存在”。
+- **限频与上限**（进程内计数，超限返回 `RATE_LIMITED`，`details.retry_after_seconds` 为建议等待秒数）：
+
+| 范围 | 额度 |
+|---|---|
+| 每令牌所有请求 | 300 次 / 分钟 |
+| 转账预处理 + 风险预检（每用户） | 60 次 / 10 分钟 |
+| 添加收款人（每用户） | 20 次 / 10 分钟 |
+| 手机号解析（每用户） | 10 次 / 10 分钟 |
+| 同时待处理操作（每用户） | 20 笔，超限 `TOO_MANY_PENDING`（HTTP 429） |
+| 请求体大小 | 64 KB，超限 HTTP 413 `PAYLOAD_TOO_LARGE` |
+| 字符串字段 / `Idempotency-Key` | 各接口参数表中的最大长度；`Idempotency-Key` ≤ 100 字符 |
+
+- **令牌撤销**：除用户在“助手授权”页撤销外，用户退出登录时也可选择同时撤销全部 Agent 令牌（`POST /ui/logout?revoke_grants=true`）。
 - **幂等**：所有 `prepare` 接口支持请求头 `Idempotency-Key`（或 body 的 `idempotency_key`）。同键同内容返回**首次响应**，同键不同内容返回 `IDEMPOTENCY_CONFLICT`。MCP 工具应为每次用户意图生成稳定的键，网络重试时复用。
 - **约定**：金额与份额一律用**字符串**（`"20000.00"`，最多两位小数）；时间为带时区偏移的 ISO8601；账号只返回脱敏形式。
 
@@ -51,7 +83,7 @@
 // 成功
 { "ok": true,  "request_id": "req_71c2", "data": { ... } }
 // 失败（HTTP 状态码见下表）
-{ "ok": false, "request_id": "req_71c2", "error": { "code": "INSUFFICIENT_BALANCE", "message": "余额不足", "details": {} } }
+{ "ok": false, "request_id": "req_71c2", "error": { "code": "INSUFFICIENT_BALANCE", "message": "可用余额不足", "details": { "available": "40800.00" } } }
 ```
 
 **业务风控拦截不用 4xx**：`prepare` 被风控拦截时仍返回 HTTP 200，`data.status = "BLOCKED"`，且没有 `confirm_url`；原因在 `data.risk.reasons`。Agent 不需要区分“HTTP 错误”与“业务拦截”，统一读 `status` 与 `reasons`。
@@ -71,8 +103,9 @@
 | `SCOPE_INSUFFICIENT` | 403 | 令牌缺少所需 scope（如未授予 `protect` 却调用冻结卡片） |
 | `USER_FROZEN` | 403 | 用户被冻结 |
 | `MERCHANT_NOT_FOUND` | 404 | 商户不存在 |
+| `NOT_FOUND` | 404 | 接口不存在（含生产模式下被关闭的演示接口） |
 | `OPERATION_NOT_FOUND` | 404 | 操作不存在 |
-| `PAYEE_NOT_FOUND` | 404 | 收款人/手机号不存在，或缺少户名；**添加收款人时，账户不存在、户名不符、命中黑名单统一返回此码与同一文案**（防探测） |
+| `PAYEE_NOT_FOUND` | 404 | 收款人/收款账户/手机号不存在，或缺少户名；**添加收款人失败时统一返回**，不区分账户不存在/户名不符/黑名单 |
 | `RESOURCE_NOT_OWNED` | 404 | 资源不存在或不属于当前用户（对外不区分，防止枚举） |
 | `CARD_QUOTA_REACHED` | 409 | 卡片数量已达上限 |
 | `CARD_STATE_INVALID` | 409 | 卡片当前状态不允许该操作 |
@@ -85,34 +118,26 @@
 | `OPERATION_EXPIRED` | 409 | 操作超过 5 分钟有效期 |
 | `OPERATION_STATE_INVALID` | 409 | 操作当前状态不允许该动作（如取消已执行的操作） |
 | `ORDER_ALREADY_PAID` | 409 | 同一商户同一订单号已支付过 |
-| `RISK_BLOCKED` | 409 | 确认时风控复核未通过（添加黑名单账户不再返回此码，见 `PAYEE_NOT_FOUND`） |
+| `PARAMS_TAMPERED` | 409 | 操作参数与预处理时不一致 |
+| `RISK_BLOCKED` | 409 | 确认时风控复核未通过（prepare 阶段的拦截以 `status=BLOCKED` 表示，不用此码） |
+| `PAYLOAD_TOO_LARGE` | 413 | 请求体超过 64 KB |
 | `AMOUNT_ABOVE_MAX` | 422 | 超过上限（额度上限、可赎回份额等） |
 | `AMOUNT_BELOW_MIN` | 422 | 低于起存/起购额 |
 | `AMOUNT_INVALID` | 422 | 金额或份额格式不合法（须为字符串，最多两位小数，大于 0） |
 | `CURRENCY_UNSUPPORTED` | 422 | 仅支持 CNY |
-| `INSUFFICIENT_BALANCE` | 422 | 余额不足（不区分是否有资金预留，**不再返回任何余额数字**；需要时调 `get_balance`，要求 `read`） |
+| `INSUFFICIENT_BALANCE` | 422 | 可用余额不足。**不再返回具体余额**，需要时调用 `get_balance` |
+| `PAYEE_NAME_MISMATCH` | 422 | 保留码：目前添加收款人不再返回它（统一为 `PAYEE_NOT_FOUND`）；转账时户名不符体现为风控原因 `PAYEE_NAME_MISMATCH` |
 | `PRODUCT_NOT_AVAILABLE` | 422 | 产品不存在或已下架 |
 | `SAME_ACCOUNT` | 422 | 转给同一账户 / 本人账户无需添加为收款人 |
-| `VALIDATION_ERROR` | 422 | 参数校验失败（缺字段、格式不对、取值非法） |
-| `RATE_LIMITED` | 429 | 请求过于频繁（见下方“限频与资源上限”） |
-| `TOO_MANY_PENDING` | 429 | 待处理（未过期且未终结）的操作已达上限（默认 20），请先确认/取消或等待过期 |
-| `PAYLOAD_TOO_LARGE` | 413 | 请求体超过 64KB |
-| `NOT_FOUND` | 404 | 接口不存在（含生产模式下已关闭的接口） |
+| `VALIDATION_ERROR` | 422 | 参数校验失败（缺字段、格式不对、取值非法、字段超长、`Idempotency-Key` 超过 100 字符） |
+| `RATE_LIMITED` | 429 | 请求过于频繁；`details.retry_after_seconds` 给出建议等待时间 |
+| `TOO_MANY_PENDING` | 429 | 同时待处理的操作过多（上限 20 笔），先确认、取消或等待过期 |
 | `EXECUTION_FAILED` | 500 | 执行失败 |
 | `INTERNAL_ERROR` | 500 | 服务内部错误 |
 
-**限频与资源上限**（超限一律 `RATE_LIMITED` / `TOO_MANY_PENDING`，触发后请退避，不要立刻重试）：
-
-| 范围 | 上限 |
-|---|---|
-| 每个令牌 | 300 次请求 / 分钟 |
-| 手机号解析 `resolve_payee_by_phone` | 每用户 10 次 / 10 分钟 |
-| 添加收款人 `add_payee` | 每用户 20 次 / 10 分钟 |
-| 转账预处理 `prepare_transfer` 与 `precheck_transfer_risk`（合计） | 每用户 60 次 / 10 分钟 |
-| 同时待处理的操作 | 每用户 20 个 |
-| 请求体 | ≤ 64KB；所有字符串字段有长度上限（超限 422）；`Idempotency-Key` ≤ 100 字符 |
-
 另有 FastAPI 参数校验失败：HTTP 422，`error.code = VALIDATION_ERROR`，`details.errors` 列出字段与原因。
+
+**`error.details` 遵循最小披露**：不再包含余额、可用额度、内部阈值等数据；常见的只有 `retry_after_seconds`、`attempts_left`、`use`（`CONFIRM_REQUIRED` 时应改调的接口）、`order_ref` 等调用方自己提供过的信息。
 
 ## 4. 核心流程：prepare → 用户确认 → 查询结果
 
@@ -171,10 +196,9 @@ Agent                         澜台后端                         用户（前�
 ```
 
 - `confirm_url` 仅在操作处于非终态时出现；`BLOCKED` 没有。
-- 执行成功后再次 `get_operation`，多出 `result`（流水号、持有编号等，随操作类型而异）。
-- **最小披露**：Agent 通道看到的 `summary` / `result` **不含 `balance_after`（操作后余额）**；需要余额请调 `get_balance`。风控原因里涉及“今日已转出”“卡片今日已用”“自动扣款明细”的三类（`DAILY_LIMIT_EXCEEDED`、`CARD_LIMIT_EXCEEDED`、`AUTOPAY_AT_RISK`）在 Agent 通道只给中性文案且 `params` 为空，具体数字仅用户在确认中心可见。
-- 同一幂等键的并发请求不会产生两个操作，后到的请求直接返回首次响应。
-- 同一 `operation_id` 重复确认不会重复扣款。
+- 执行成功后再次 `get_operation`，多出 `result`（流水号、操作后余额、持有编号等，随操作类型而异）。
+- 同一 `operation_id` 重复确认不会重复扣款（并发确认也只执行一次，其余请求返回首次结果）。
+- **Agent 视图已裁剪**：`summary` 与 `result` 不含 `balance_after`；用户在前端看到的视图包含余额。需要余额请调用 `get_balance`。
 
 ### 4.3 操作类型（`type`）
 
@@ -203,10 +227,10 @@ Agent                         澜台后端                         用户（前�
 | 原因码 | 级别 | 用户可见文案（模板） | 给 Agent 的解释方向 |
 |---|---|---|---|
 | `BLACKLIST_HIT` | blocked | 该收款账户已被列入涉诈风险名单，交易被拦截 | 不要尝试换渠道或拆分金额；建议用户核实对方身份并联系反诈热线 96110 |
-| `CARD_LIMIT_EXCEEDED` | blocked | 超过卡片额度限制（Agent 通道不含具体额度与已用数字） | 建议用户在确认中心查看额度，分日或提额（需验证） |
+| `CARD_LIMIT_EXCEEDED` | blocked | 超过卡片额度：单笔 {single} 元 / 单日 {daily} 元（今日已用 {used} 元） | 告知额度，建议分日或提额（需验证） |
 | `CARD_NOT_USABLE` | blocked | 卡片当前为{status}，无法支付 | 引导用户先处理卡片状态（解冻/补发），不要换卡重试以绕过风控 |
 | `CONTROL_DISABLED` | blocked | 该卡片的「{name}」开关已关闭，无法完成本次支付 | 如确需支付，可引导用户在确认中心打开对应开关（需验证） |
-| `DAILY_LIMIT_EXCEEDED` | blocked | 超过账户单日累计转出限额（Agent 通道不含“今日已转出”数字；用户界面完整显示；累计含转账与卡片/商户支付） | 告知用户今日额度已不足，建议明日再试 |
+| `DAILY_LIMIT_EXCEEDED` | blocked | 超过账户单日累计转出限额 {limit} 元（今日已转出 {used} 元） | 告知用户今日剩余额度，建议明日再试 |
 | `MERCHANT_RISKY` | blocked | 该商户已被列入风险名单，支付被拦截 | 提醒用户核实商户身份，谨防返利、刷单类诈骗 |
 | `RISK_LEVEL_FORBIDDEN` | blocked | 产品风险等级 {product} 超出您的风险承受能力 {user} 两级及以上，不适合购买 | 不要劝说用户绕过；可推荐风险等级不高于其承受能力的产品 |
 | `RISK_PROFILE_MISSING` | blocked | {status}，请先完成风险测评后再购买理财产品 | 引导用户到界面完成风险测评（测评只能由用户本人提交） |
@@ -224,7 +248,7 @@ Agent                         澜台后端                         用户（前�
 | `NEW_PAYEE` | medium | 首次向该收款人转账 | 向用户说明并提醒核实对方身份 |
 | `OVERSEAS_PAYMENT` | medium | 该商户位于境外 | 确认用户知晓境外交易的汇率与风险 |
 | `RAPID_REPEAT` | medium | {window} 分钟内已发生多笔转出 | 询问是否被人催促连续转账 |
-| `AUTOPAY_AT_RISK` | low | 转出后余额可能不足以覆盖近期自动扣款（Agent 通道不含扣款明细） | 提醒用户到界面查看扣款计划，或用 `list_mandates` 查询 |
+| `AUTOPAY_AT_RISK` | low | 转出后余额可能不足以覆盖 {days} 天内的自动扣款（{items}） | 告知具体扣款项与日期 |
 | `CARD_APPLY` | low | 将为该账户新增一张借记卡 | 提醒用户新卡需妥善保管 |
 | `CROSS_BANK_FEE` | low | 跨行转账将收取手续费 {fee} 元 | 向用户说明手续费 |
 | `EARLY_WITHDRAW_LOSS` | low | 提前支取将损失利息 {loss} 元（到期可得 {full} 元，现仅 {early} 元） | 对比到期日期，建议用户权衡 |
@@ -234,7 +258,7 @@ Agent                         澜台后端                         用户（前�
 | `NIGHT_TRANSACTION` | low | 当前为夜间时段（0~6 点） | 提示用户确认是否本人操作 |
 | `REDEEM_LOSS` | low | 按当前净值赎回将实现亏损 {loss} 元 | 提示用户可考虑继续持有，由其自行决定 |
 
-`{xxx}` 为占位符，实际值在响应的 `params` 与已渲染的 `message` 中。
+`{xxx}` 为占位符，实际值在响应的 `params` 与已渲染的 `message` 中。**例外**：`DAILY_LIMIT_EXCEEDED`、`CARD_LIMIT_EXCEEDED`、`AUTOPAY_AT_RISK` 在 Agent 通道只返回中性文案（如“超过账户单日累计转出限额”），`params` 为空，不含金额、今日已用额与扣款明细；用户在前端确认页可看到完整文案。
 
 ## 6. 事件流
 
@@ -246,7 +270,7 @@ Agent                         澜台后端                         用户（前�
 
 | type | 触发 | `data` 主要字段 |
 |---|---|---|
-| `txn_out / txn_in` | 任一账户扣款/入账（含他人转入） | account_id, category, amount, counterparty, memo, merchant_category, operation_id（**不含 balance_after**） |
+| `txn_out / txn_in` | 任一账户扣款/入账（含他人转入） | account_id, category, amount, counterparty, memo, merchant_category, operation_id（不含余额） |
 | `operation` | 操作状态变化（含 OTP 通过/锁定、过期、取消、拦截、失败） | operation_id, op_type, status |
 | `card` | 卡片冻结/挂失/解冻/补发/开关/额度变化 | card_id, change, status |
 | `account` | 账户转账额度变化 | account_id, change |
@@ -254,6 +278,8 @@ Agent                         澜台后端                         用户（前�
 | `hold` | 预留创建/释放/到期 | hold_id, status, amount |
 | `deposit` | 定期到期自动兑付 | holding_id, status=matured, principal, interest |
 | `risk_profile` | 用户完成风险测评 | level, label |
+
+**保留期**：事件保留 30 天，过期事件会在登录时惰性清理；离线较久后恢复，请先 `get_balance` / `list_transactions` 对账，再从 `latest_id` 继续。
 
 典型用法：用户说“收到 AA 款提醒我”→ Agent 记录目标，轮询时匹配 `txn_in` 的 `memo`/`amount`；“用户确认了吗”→ 匹配 `operation` 事件而不是盲目轮询。
 
@@ -278,13 +304,13 @@ Agent                         澜台后端                         用户（前�
 
 - **MCP 工具名**：`get_balance`　**类别**：查询　**所需 scope**：`read`
 - **说明**：账户余额、已预留金额、可用余额、单笔/单日限额、今日已转出与剩余额度。
-- **注意**：转账前用 `available` 判断，不要用 `balance`。
+- **注意**：**余额类数据只在本接口返回**（其它接口的错误、摘要、结果、事件均不再带余额）。转账前用 `available` 判断，不要用 `balance`。`today_transferred_out` 仅统计转账类别；风控的单日限额口径还包含卡片/商户支付，`daily_remaining` 仅供参考，以 prepare 的风控结果为准。
 - **路径参数**：`account_id`
 
 #### `GET /api/v1/accounts/{account_id}/transactions`
 
 - **MCP 工具名**：`list_transactions`　**类别**：查询　**所需 scope**：`read`
-- **说明**：交易流水，支持时间、方向、类别、金额下限、关键词、对方、商户品类过滤与游标分页。关键词中的 `%`、`_` 按字面匹配。
+- **说明**：交易流水，支持时间、方向、类别、金额下限、关键词、对方、商户品类过滤与游标分页。
 - **注意**：分页：把响应里的 `next_cursor` 原样传回 `cursor`，为 null 表示没有更多。`from/to` 为纯日期时，`to` 含当天。
 - **路径参数**：`account_id`
 
@@ -295,9 +321,9 @@ Agent                         澜台后端                         用户（前�
 | `direction` | string（^(in\|out)$） | 否 | in 收入 / out 支出 |
 | `category` | string | 否 | 类别：transfer / deposit_out / deposit_in / interest / autopay / salary / fee / wealth_out / wealth_in / other |
 | `min_amount` | string | 否 | 金额下限（含），字符串 |
-| `keyword` | string | 否 | 备注或对方名称包含的关键词 |
-| `counterparty` | string | 否 | 对方名称包含的文本 |
-| `merchant_category` | string | 否 | 商户品类：餐饮 / 交通 / 购物 / 日用 / 医疗 / 娱乐 / 居住 / 生活缴费 / 订阅 / 还款 / 收入 / 礼品 / 理财 |
+| `keyword` | string（≤50） | 否 | 备注或对方名称包含的关键词 |
+| `counterparty` | string（≤50） | 否 | 对方名称包含的文本 |
+| `merchant_category` | string（≤20） | 否 | 商户品类：餐饮 / 交通 / 购物 / 日用 / 医疗 / 娱乐 / 居住 / 生活缴费 / 订阅 / 还款 / 收入 / 礼品 / 理财 |
 | `limit` | integer | 否 | 每页条数（默认 20，范围 1~100） |
 | `cursor` | integer | 否 | 分页游标：上一页返回的 next_cursor（默认 0，范围 0~） |
 
@@ -311,7 +337,7 @@ Agent                         澜台后端                         用户（前�
 
 | 查询参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `q` | string | 否 | 搜索词：匹配户名、备注名或账号尾号 |
+| `q` | string（≤30） | 否 | 搜索词：匹配户名、备注名或账号尾号 |
 
 #### `GET /api/v1/payees/resolve`
 
@@ -327,15 +353,15 @@ Agent                         澜台后端                         用户（前�
 
 - **MCP 工具名**：`add_payee`　**类别**：直接生效　**所需 scope**：`prepare`
 - **说明**：添加收款人。行内账户会核验户名，黑名单账户会被拒绝。
-- **注意**：添加不等于放行：首次转账仍触发 `NEW_PAYEE`。已存在时返回 `already_exists=true`。账户不存在、户名不符、命中黑名单**统一返回 `PAYEE_NOT_FOUND`（同一文案）**，不要据此向用户推断原因，请让用户核对账号与户名；本接口限频每用户 10 分钟 20 次。
+- **注意**：添加不等于放行：首次转账仍触发 `NEW_PAYEE`。已存在时返回 `already_exists=true`。账户不存在、户名不符、命中黑名单**统一返回** `PAYEE_NOT_FOUND`（不区分原因，防探测）；每用户 10 分钟最多 20 次，超限 `RATE_LIMITED`。
 
 | 请求体字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
-| `account_no` | string | 是 |  | 账号 |
-| `name` | string | 是 |  | 户名 |
-| `bank_code` | string | 否 | `LANTAI` | LANTAI（行内，默认）/ OTHER（他行） |
-| `bank_name` | string | 否 |  | 他行名称，缺省“他行” |
-| `alias` | string | 否 |  | 备注名，≤32 字；传 null 清除 |
+| `account_no` | string（≤32） | 是 |  | 账号 |
+| `name` | string（≤64） | 是 |  | 户名 |
+| `bank_code` | string（≤20） | 否 | `LANTAI` | LANTAI（行内，默认）/ OTHER（他行） |
+| `bank_name` | string（≤40） | 否 |  | 他行名称，缺省“他行” |
+| `alias` | string（≤32） | 否 |  | 备注名，≤32 字；传 null 清除 |
 
 #### `PATCH /api/v1/payees/{payee_id}`
 
@@ -345,7 +371,7 @@ Agent                         澜台后端                         用户（前�
 
 | 请求体字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
-| `alias` | string | 否 |  | 备注名，≤32 字；传 null 清除 |
+| `alias` | string（≤32） | 否 |  | 备注名，≤32 字；传 null 清除 |
 
 #### `DELETE /api/v1/payees/{payee_id}`
 
@@ -360,20 +386,20 @@ Agent                         澜台后端                         用户（前�
 
 - **MCP 工具名**：`prepare_transfer`　**类别**：预处理　**所需 scope**：`prepare`
 - **说明**：转账预处理：校验、风控评估并创建待确认操作。收款方三选一：`payee_id` / `payee_account_no`+`payee_name` / `payee_phone`+`payee_name`。
-- **注意**：返回后必须引导用户到 `confirm_url` 确认；Agent 无法确认。风控拦截时仍返回 200，`status=BLOCKED`。
+- **注意**：返回后必须引导用户到 `confirm_url` 确认；Agent 无法确认。风控拦截时仍返回 200，`status=BLOCKED`。Agent 视图的 `summary` 不含 `balance_after`；余额不足只返回 `INSUFFICIENT_BALANCE`，不带具体余额。每用户 10 分钟最多 60 次转账预处理/预检，同时待处理操作最多 20 笔（超限 `TOO_MANY_PENDING`）。
 
 | 请求体字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
-| `from_account_id` | string | 是 |  | 付款账户 id，如 acc_001 |
-| `payee_id` | string | 否 |  | 已保存收款人 id |
-| `payee_account_no` | string | 否 |  | 收款账号（16 位） |
-| `payee_name` | string | 否 |  | 收款人完整户名，用于核验 |
-| `payee_phone` | string | 否 |  | 收款人手机号（11 位，仅澜台用户）并需同时提供 payee_name |
-| `bank_code` | string | 否 |  | LANTAI（行内，默认）/ OTHER（他行） |
-| `bank_name` | string | 否 |  | 他行名称，缺省“他行” |
-| `amount` | string | 是 |  | 金额，字符串，最多两位小数，大于 0 |
-| `currency` | string | 否 | `CNY` | 仅支持 CNY |
-| `memo` | string | 否 |  | 附言，≤200 字 |
+| `from_account_id` | string（≤40） | 是 |  | 付款账户 id，如 acc_001 |
+| `payee_id` | string（≤40） | 否 |  | 已保存收款人 id |
+| `payee_account_no` | string（≤32） | 否 |  | 收款账号（16 位） |
+| `payee_name` | string（≤64） | 否 |  | 收款人完整户名，用于核验 |
+| `payee_phone` | string（≤20） | 否 |  | 收款人手机号（11 位，仅澜台用户）并需同时提供 payee_name |
+| `bank_code` | string（≤20） | 否 |  | LANTAI（行内，默认）/ OTHER（他行） |
+| `bank_name` | string（≤40） | 否 |  | 他行名称，缺省“他行” |
+| `amount` | string（≤24） | 是 |  | 金额，字符串，最多两位小数，大于 0 |
+| `currency` | string（≤8） | 否 | `CNY` | 仅支持 CNY |
+| `memo` | string（≤200） | 否 |  | 附言，≤200 字 |
 
 > prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
 
@@ -381,7 +407,7 @@ Agent                         澜台后端                         用户（前�
 
 - **MCP 工具名**：`get_operation`　**类别**：查询　**所需 scope**：`read`
 - **说明**：查询操作的当前状态、风控结果与执行结果。
-- **注意**：prepare 之后用它轮询用户是否已确认；建议间隔 2~3 秒，到终态即停。
+- **注意**：prepare 之后用它轮询用户是否已确认；建议间隔 2~3 秒，到终态即停。**Agent 视图已裁剪**：`summary`/`result` 不含 `balance_after`；`DAILY_LIMIT_EXCEEDED`、`CARD_LIMIT_EXCEEDED`、`AUTOPAY_AT_RISK` 三条风控原因只给中性文案、`params` 为空。
 - **路径参数**：`op_id`
 
 #### `POST /api/v1/operations/{op_id}/cancel`
@@ -395,20 +421,20 @@ Agent                         澜台后端                         用户（前�
 
 - **MCP 工具名**：`precheck_transfer_risk`　**类别**：查询　**所需 scope**：`read`
 - **说明**：只评估转账风险，不创建操作、不扣款。
-- **注意**：用户还在犹豫或信息不全时先探路，例如提前发现黑名单收款方。请求体与 `prepare_transfer` 相同。
+- **注意**：用户还在犹豫或信息不全时先探路，例如提前发现黑名单收款方。请求体与 `prepare_transfer` 相同；与 prepare 共用每用户 10 分钟 60 次的探测额度。
 
 | 请求体字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
-| `from_account_id` | string | 是 |  | 付款账户 id，如 acc_001 |
-| `payee_id` | string | 否 |  | 已保存收款人 id |
-| `payee_account_no` | string | 否 |  | 收款账号（16 位） |
-| `payee_name` | string | 否 |  | 收款人完整户名，用于核验 |
-| `payee_phone` | string | 否 |  | 收款人手机号（11 位，仅澜台用户）并需同时提供 payee_name |
-| `bank_code` | string | 否 |  | LANTAI（行内，默认）/ OTHER（他行） |
-| `bank_name` | string | 否 |  | 他行名称，缺省“他行” |
-| `amount` | string | 是 |  | 金额，字符串，最多两位小数，大于 0 |
-| `currency` | string | 否 | `CNY` | 仅支持 CNY |
-| `memo` | string | 否 |  | 附言，≤200 字 |
+| `from_account_id` | string（≤40） | 是 |  | 付款账户 id，如 acc_001 |
+| `payee_id` | string（≤40） | 否 |  | 已保存收款人 id |
+| `payee_account_no` | string（≤32） | 否 |  | 收款账号（16 位） |
+| `payee_name` | string（≤64） | 否 |  | 收款人完整户名，用于核验 |
+| `payee_phone` | string（≤20） | 否 |  | 收款人手机号（11 位，仅澜台用户）并需同时提供 payee_name |
+| `bank_code` | string（≤20） | 否 |  | LANTAI（行内，默认）/ OTHER（他行） |
+| `bank_name` | string（≤40） | 否 |  | 他行名称，缺省“他行” |
+| `amount` | string（≤24） | 是 |  | 金额，字符串，最多两位小数，大于 0 |
+| `currency` | string（≤8） | 否 | `CNY` | 仅支持 CNY |
+| `memo` | string（≤200） | 否 |  | 附言，≤200 字 |
 
 ### 7.4 定期存款
 
@@ -431,9 +457,9 @@ Agent                         澜台后端                         用户（前�
 
 | 请求体字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
-| `account_id` | string | 是 |  | 账户 id |
-| `product_id` | string | 是 |  | 产品 id |
-| `amount` | string | 是 |  | 金额，字符串，最多两位小数，大于 0 |
+| `account_id` | string（≤40） | 是 |  | 账户 id |
+| `product_id` | string（≤40） | 是 |  | 产品 id |
+| `amount` | string（≤24） | 是 |  | 金额，字符串，最多两位小数，大于 0 |
 
 > prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
 
@@ -446,7 +472,7 @@ Agent                         澜台后端                         用户（前�
 
 | 请求体字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
-| `holding_id` | string | 否 |  | 定期/理财持仓 id |
+| `holding_id` | string（≤40） | 否 |  | 定期/理财持仓 id |
 
 > prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
 
@@ -486,7 +512,7 @@ Agent                         澜台后端                         用户（前�
 
 | 请求体字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
-| `card_id` | string | 否 |  | 卡片 id |
+| `card_id` | string（≤40） | 否 |  | 卡片 id |
 | `online` | boolean | 否 |  | 线上支付开关：true 开启 / false 关闭 |
 | `overseas` | boolean | 否 |  | 境外交易开关：true 开启 / false 关闭 |
 | `atm` | boolean | 否 |  | ATM 取现开关：true 开启 / false 关闭 |
@@ -500,9 +526,9 @@ Agent                         澜台后端                         用户（前�
 
 | 请求体字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
-| `card_id` | string | 否 |  | 卡片 id |
-| `single_limit` | string | 否 |  | 单笔额度（元，字符串） |
-| `daily_limit` | string | 否 |  | 单日额度（元，字符串） |
+| `card_id` | string（≤40） | 否 |  | 卡片 id |
+| `single_limit` | string（≤24） | 否 |  | 单笔额度（元，字符串） |
+| `daily_limit` | string（≤24） | 否 |  | 单日额度（元，字符串） |
 
 #### `PUT /api/v1/accounts/{account_id}/limits`
 
@@ -513,9 +539,9 @@ Agent                         澜台后端                         用户（前�
 
 | 请求体字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
-| `account_id` | string | 否 |  | 账户 id |
-| `single_limit` | string | 否 |  | 单笔额度（元，字符串） |
-| `daily_limit` | string | 否 |  | 单日额度（元，字符串） |
+| `account_id` | string（≤40） | 否 |  | 账户 id |
+| `single_limit` | string（≤24） | 否 |  | 单笔额度（元，字符串） |
+| `daily_limit` | string（≤24） | 否 |  | 单日额度（元，字符串） |
 
 #### `POST /api/v1/cards/apply/prepare`
 
@@ -525,7 +551,7 @@ Agent                         澜台后端                         用户（前�
 
 | 请求体字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
-| `account_id` | string | 是 |  | 账户 id |
+| `account_id` | string（≤40） | 是 |  | 账户 id |
 
 > prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
 
@@ -538,7 +564,7 @@ Agent                         澜台后端                         用户（前�
 
 | 请求体字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
-| `card_id` | string | 否 |  | 卡片 id |
+| `card_id` | string（≤40） | 否 |  | 卡片 id |
 
 > prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
 
@@ -551,7 +577,7 @@ Agent                         澜台后端                         用户（前�
 
 | 请求体字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
-| `card_id` | string | 否 |  | 卡片 id |
+| `card_id` | string（≤40） | 否 |  | 卡片 id |
 
 > prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
 
@@ -563,7 +589,7 @@ Agent                         澜台后端                         用户（前�
 
 | 请求体字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
-| `card_id` | string | 否 |  | 卡片 id |
+| `card_id` | string（≤40） | 否 |  | 卡片 id |
 | `online` | boolean | 否 |  | 线上支付开关：true 开启 / false 关闭 |
 | `overseas` | boolean | 否 |  | 境外交易开关：true 开启 / false 关闭 |
 | `atm` | boolean | 否 |  | ATM 取现开关：true 开启 / false 关闭 |
@@ -579,9 +605,9 @@ Agent                         澜台后端                         用户（前�
 
 | 请求体字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
-| `card_id` | string | 否 |  | 卡片 id |
-| `single_limit` | string | 否 |  | 单笔额度（元，字符串） |
-| `daily_limit` | string | 否 |  | 单日额度（元，字符串） |
+| `card_id` | string（≤40） | 否 |  | 卡片 id |
+| `single_limit` | string（≤24） | 否 |  | 单笔额度（元，字符串） |
+| `daily_limit` | string（≤24） | 否 |  | 单日额度（元，字符串） |
 
 > prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
 
@@ -594,9 +620,9 @@ Agent                         澜台后端                         用户（前�
 
 | 请求体字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
-| `account_id` | string | 否 |  | 账户 id |
-| `single_limit` | string | 否 |  | 单笔额度（元，字符串） |
-| `daily_limit` | string | 否 |  | 单日额度（元，字符串） |
+| `account_id` | string（≤40） | 否 |  | 账户 id |
+| `single_limit` | string（≤24） | 否 |  | 单笔额度（元，字符串） |
+| `daily_limit` | string（≤24） | 否 |  | 单日额度（元，字符串） |
 
 > prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
 
@@ -621,7 +647,7 @@ Agent                         澜台后端                         用户（前�
 
 | 请求体字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
-| `mandate_id` | string | 否 |  |  |
+| `mandate_id` | string（≤40） | 否 |  |  |
 
 > prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
 
@@ -641,14 +667,14 @@ Agent                         澜台后端                         用户（前�
 
 - **MCP 工具名**：`create_hold`　**类别**：直接生效　**所需 scope**：`protect`
 - **说明**：预留（锁定）一笔资金，立即生效。预留部分不可转出、存定期、支付或代扣。
-- **注意**：`until` 可选，最长 366 天，每账户最多 10 笔有效预留。释放需 `prepare_hold_release`。响应只含预留本身，**不再返回 `available_after`**。
+- **注意**：`until` 可选，最长 366 天，每账户最多 10 笔有效预留。释放需 `prepare_hold_release`。响应只含预留本身，不再返回预留后的可用余额；余额不足返回 `INSUFFICIENT_BALANCE`。
 - **路径参数**：`account_id`
 
 | 请求体字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
-| `amount` | string | 是 |  | 金额，字符串，最多两位小数，大于 0 |
-| `purpose` | string | 否 |  | 用途说明，≤60 字 |
-| `until` | string | 否 |  | 到期日：ISO 日期（含当天）或带/不带时区的时间；缺省=直到释放，最长 366 天 |
+| `amount` | string（≤24） | 是 |  | 金额，字符串，最多两位小数，大于 0 |
+| `purpose` | string（≤60） | 否 |  | 用途说明，≤60 字 |
+| `until` | string（≤40） | 否 |  | 到期日：ISO 日期（含当天）或带/不带时区的时间；缺省=直到释放，最长 366 天 |
 
 #### `POST /api/v1/holds/{hold_id}/release/prepare`
 
@@ -659,7 +685,7 @@ Agent                         澜台后端                         用户（前�
 
 | 请求体字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
-| `hold_id` | string | 否 |  |  |
+| `hold_id` | string（≤40） | 否 |  |  |
 
 > prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
 
@@ -678,10 +704,10 @@ Agent                         澜台后端                         用户（前�
 
 | 请求体字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
-| `card_id` | string | 是 |  | 卡片 id |
-| `merchant_id` | string | 是 |  | 商户 id |
-| `amount` | string | 是 |  | 金额，字符串，最多两位小数，大于 0 |
-| `order_ref` | string | 是 |  | 订单号，≤60 字；同一商户内唯一 |
+| `card_id` | string（≤40） | 是 |  | 卡片 id |
+| `merchant_id` | string（≤40） | 是 |  | 商户 id |
+| `amount` | string（≤24） | 是 |  | 金额，字符串，最多两位小数，大于 0 |
+| `order_ref` | string（≤60） | 是 |  | 订单号，≤60 字；同一商户内唯一 |
 | `channel` | `online` \| `offline` | 否 | `online` | 支付渠道：online（默认）/ offline |
 
 > prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
@@ -719,9 +745,9 @@ Agent                         澜台后端                         用户（前�
 
 | 请求体字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
-| `account_id` | string | 是 |  | 账户 id |
-| `product_id` | string | 是 |  | 产品 id |
-| `amount` | string | 是 |  | 金额，字符串，最多两位小数，大于 0 |
+| `account_id` | string（≤40） | 是 |  | 账户 id |
+| `product_id` | string（≤40） | 是 |  | 产品 id |
+| `amount` | string（≤24） | 是 |  | 金额，字符串，最多两位小数，大于 0 |
 
 > prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
 
@@ -733,9 +759,9 @@ Agent                         澜台后端                         用户（前�
 
 | 请求体字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
-| `holding_id` | string | 是 |  | 定期/理财持仓 id |
-| `shares` | string | 否 |  | 赎回份额，字符串，最多两位小数；缺省=全部赎回 |
-| `account_id` | string | 否 |  | 账户 id |
+| `holding_id` | string（≤40） | 是 |  | 定期/理财持仓 id |
+| `shares` | string（≤16） | 否 |  | 赎回份额，字符串，最多两位小数；缺省=全部赎回 |
+| `account_id` | string（≤40） | 否 |  | 账户 id |
 
 > prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
 
@@ -745,7 +771,7 @@ Agent                         澜台后端                         用户（前�
 
 - **MCP 工具名**：`get_events`　**类别**：查询　**所需 scope**：`read`
 - **说明**：递增事件流：入账/扣款、操作状态变化、卡片/协议/预留变化、定期到期、风险测评。
-- **注意**：Agent 自行保存 `next_after_id` 并轮询，用于提醒、对账与定时触发。银行不推送。
+- **注意**：Agent 自行保存 `next_after_id` 并轮询，用于提醒、对账与定时触发。银行不推送。事件**不含余额**；保留 30 天，过期事件会被惰性清理，游标过旧则取不到更早事件。
 
 | 查询参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -819,10 +845,10 @@ Agent                         澜台后端                         用户（前�
       "from_account_id": { "type": "string", "description": "付款账户 id，如 acc_001" },
       "payee_id": { "type": "string", "description": "已保存收款人 id" },
       "payee_account_no": { "type": "string" },
-      "payee_name": { "type": "string", "description": "收款人完整户名，用于核验" },
+      "payee_name": { "type": "string", "maxLength": 64, "description": "收款人完整户名，用于核验" },
       "payee_phone": { "type": "string", "description": "11 位手机号（澜台用户）" },
       "bank_code": { "type": "string", "description": "LANTAI（默认，行内）或 OTHER（他行）" },
-      "amount": { "type": "string", "pattern": "^\\d{1,12}(\\.\\d{1,2})?$", "description": "金额，字符串，最多两位小数" },
+      "amount": { "type": "string", "maxLength": 24, "pattern": "^\\d{1,12}(\\.\\d{1,2})?$", "description": "金额，字符串，最多两位小数" },
       "memo": { "type": "string", "maxLength": 200 },
       "idempotency_key": { "type": "string", "description": "同一次用户意图复用同一个键" },
       "agent_context": { "type": "object", "properties": { "intent_summary": { "type": "string" }, "user_utterance_excerpt": { "type": "string" } } }
@@ -835,6 +861,8 @@ Agent                         澜台后端                         用户（前�
 
 - **鉴权**：MCP 服务器启动时读取用户授予的 `agent_token`（环境变量或会话参数）；收到 `AUTH_EXPIRED` / `AUTH_REVOKED` 时返回明确提示，让 Agent 请用户重新授权，**不要自动重试**。
 - **幂等键**：在 MCP 层为每个“用户意图”生成并缓存键（如对话轮次 id + 工具名 + 参数哈希），重试时复用。
+- **限频**：遇到 `RATE_LIMITED` 读取 `details.retry_after_seconds` 后退避，不要立即重试；`TOO_MANY_PENDING` 时先提醒用户处理或取消已有待确认操作。
+- **余额**：错误与摘要里不再有余额，需要时显式调用 `get_balance`，并仅在用户需要时展示。
 - **错误透传**：把 `error.code` / `error.message` / `error.details` 原样返回给模型，不要吞掉；`CONFIRM_REQUIRED` 的 `details.use` 直接告诉了应改调的接口。
 - **结果裁剪**：`list_transactions` 默认 `limit=20`，需要更多再翻页；避免一次性塞入上百条流水撑爆上下文。
 - **`get_operation` 轮询**：由 MCP 工具内部或 Agent 控制，建议 2~3 秒一次，遇终态或超过 5 分钟停止；也可改用 `get_events` 的 `operation` 事件。
@@ -856,7 +884,7 @@ Agent                         澜台后端                         用户（前�
 
 | 类别 | 内容 |
 |---|---|
-| 用户（密码均为 `Lantai@2026`） | 测试1 `13800000001`（主演示，风险等级 R3 平衡型）、测试2 `13900000002`（未测评）、张三 `13600000003`、李四 `13700000004` |
+| 用户（演示口令默认 `Lantai@2026`，可由 `SEED_PASSWORD` 覆盖，仅限本地） | 测试1 `13800000001`（主演示，风险等级 R3 平衡型）、测试2 `13900000002`（未测评）、张三 `13600000003`、李四 `13700000004` |
 | 测试1 的账户 | `acc_001` 活期 50,800.00；`acc_002` 储蓄 120,000.00；单笔限额 50,000，单日 100,000 |
 | 测试1 的卡 | `crd_001`（acc_001）、`crd_002`（acc_002）；单笔 20,000 / 单日 50,000；线上、ATM 开，境外关 |
 | 收款人 | `pye_001` 李四（行内，已转过）、`pye_002` 王五（他行，已转过） |
@@ -874,9 +902,9 @@ Agent                         澜台后端                         用户（前�
 
 | 前缀 | 用途 | 说明 |
 |---|---|---|
-| `/ui/*` | 登录、签发/撤销 Agent 令牌、查看待确认操作、OTP 提示与验证、**确认/拒绝**、提交风险测评、审计 | 仅 `user_session`；确认权的唯一入口 |
-| `/admin/*` | 重置数据、模拟时钟、黑名单、模拟商户扣款、调整净值、锁定卡片 | 需 `X-Admin-Key`，仅演示；`APP_ENV=prod` 时默认关闭（返回 `NOT_FOUND`） |
+| `/ui/*` | 登录（含防暴破限频）、退出（可同时撤销全部 Agent 令牌）、签发/撤销 Agent 令牌、查看待确认操作、OTP 提示与验证、**确认/拒绝**、提交风险测评、审计 | 仅 `user_session`；确认权的唯一入口；生产模式下 `otp-hint` 关闭 |
+| `/admin/*` | 重置数据、模拟时钟、黑名单、模拟商户扣款、调整净值、锁定卡片 | 需 `X-Admin-Key`，仅演示；生产模式默认关闭（`NOT_FOUND`），启用时要求强随机密钥 |
 
 ---
 
-*附：接口权威描述可随时从 `GET /openapi.json` 获取（含 `/ui`、`/admin`）；Swagger 页面为 `/docs`。生产模式（`APP_ENV=prod`）下 `/docs`、`/openapi.json` 默认关闭。*
+*附：开发环境可从 `GET /openapi.json` 获取接口权威描述（含 `/ui`、`/admin`），Swagger 为 `/docs`；生产模式（`APP_ENV=prod`）默认关闭，以本文为准。*
