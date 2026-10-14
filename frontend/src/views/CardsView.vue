@@ -55,7 +55,7 @@ const apply = (a) => run(a.id, () => api.prepareCardApply(a.id));
 
 function reportLoss(c) {
   if (!window.confirm(`挂失卡片 ${c.card_no_masked}？挂失后不可撤销，需补发新卡。`)) return;
-  run(c.id, () => api.reportLoss(c.id), "已挂失");
+  run(c.id, () => api.reportLoss(c.id));  // 挂失不可撤销，生成待确认操作后跳转确认中心
 }
 
 // 关闭开关立即生效；打开开关需要确认流程

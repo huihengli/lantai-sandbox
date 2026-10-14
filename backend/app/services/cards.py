@@ -73,16 +73,6 @@ def freeze(ctx: audit.Ctx, user: User, card_id: str) -> dict:
     return {"card": view(c), "changed": True}
 
 
-def report_loss(ctx: audit.Ctx, user: User, card_id: str) -> dict:
-    c = get_owned(ctx.db, user.id, card_id, lock=True)
-    if c.status == "lost":
-        return {"card": view(c), "changed": False}
-    _set_status(c, "lost")
-    _note(ctx.db, c, "lost")
-    audit.log(ctx, "card_report_loss", detail={"card_id": c.id})
-    return {"card": view(c), "changed": True}
-
-
 def _confirm_required(what: str, items: list[str], prepare_path: str) -> LantaiError:
     return LantaiError("CONFIRM_REQUIRED", f"{what}属于放宽权限，需走 prepare 并由用户确认",
                        {"items": items, "use": prepare_path})
@@ -219,6 +209,23 @@ def execute_unfreeze(db: Session, op, plan: Plan, now) -> dict:
     c = plan.data["card"]
     _set_status(c, "active")
     _note(db, c, "unfrozen")
+    return {"card_id": c.id, "status": c.status, "executed_at": clock.iso(now)}
+
+
+# 挂失不可撤销：不再作为 protect 直接操作，必须 prepare + 用户确认（紧急止损请先冻结）
+def build_report_loss_plan(db: Session, user: User, params: dict, now, lock: bool = False) -> Plan:
+    c = get_owned(db, user.id, params["card_id"], lock=lock)
+    if c.status == "lost":
+        raise LantaiError("CARD_STATE_INVALID", "该卡片已挂失")
+    summary = {"action": "挂失卡片", "card": mask(c.card_no),
+               "change": f"{STATUS_TEXT[c.status]} → 已挂失（不可撤销，需补发新卡）"}
+    return _plan(db, user, _card_account(db, user, c, lock), "card_report_loss", now, params, summary, {}, {"card": c})
+
+
+def execute_report_loss(db: Session, op, plan: Plan, now) -> dict:
+    c = plan.data["card"]
+    _set_status(c, "lost")
+    _note(db, c, "lost")
     return {"card_id": c.id, "status": c.status, "executed_at": clock.iso(now)}
 
 

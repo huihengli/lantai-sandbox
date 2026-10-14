@@ -20,6 +20,8 @@ CATALOG: dict[str, tuple[str, str, str]] = {
     "CROSS_BANK_FEE": ("low", "跨行转账将收取手续费 {fee} 元", "向用户说明手续费"),
     "CARD_APPLY": ("low", "将为该账户新增一张借记卡", "提醒用户新卡需妥善保管"),
     "CARD_UNFREEZE": ("medium", "解冻/解锁卡片后，卡片渠道的交易将恢复", "确认是用户本人要求解冻，且已排除盗刷风险"),
+    "CARD_REPORT_LOSS": ("low", "挂失后原卡立即作废且不可撤销，需补发新卡才能继续使用",
+                         "如需立即止损，可先冻结卡片（立即生效），再请用户确认挂失"),
     "CARD_REISSUE": ("medium", "补发新卡，原卡号将作废", "确认用户已挂失原卡"),
     "CONTROL_LOOSEN": ("medium", "将打开以下交易开关：{items}", "确认用户确有使用需求"),
     "CONTROL_OVERSEAS_ON": ("high", "将打开境外交易，存在被盗刷风险", "提醒仅在出境期间开启，用完及时关闭"),

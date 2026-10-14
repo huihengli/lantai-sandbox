@@ -64,8 +64,30 @@ def test_admin_lock_then_unlock(client, lin):
     assert card(client, lin)["status"] == "active"
 
 
+def test_report_loss_requires_user_confirmation(client, lin):
+    direct = post(client, lin, "/cards/crd_001/report-loss")
+    assert direct["error"]["code"] == "CONFIRM_REQUIRED"
+    assert direct["error"]["details"]["use"] == "/api/v1/cards/crd_001/report-loss/prepare"
+    assert card(client, lin)["status"] == "active"  # Agent 无法直接挂失
+    assert post(client, lin, "/cards/crd_101/report-loss")["error"]["code"] == "RESOURCE_NOT_OWNED"
+    op = post(client, lin, "/cards/crd_001/report-loss/prepare")
+    assert op["data"]["status"] == "PREPARED" and reasons(op) == ["CARD_REPORT_LOSS"]  # 仅需确认，无需 OTP
+    assert card(client, lin)["status"] == "active"  # 确认前不变
+    assert client.post(f"/ui/operations/{op['data']['operation_id']}/confirm", headers=lin.agent).status_code == 403
+    assert finish(lin, op)["data"]["status"] == "EXECUTED"
+    assert card(client, lin)["status"] == "lost"
+    assert post(client, lin, "/cards/crd_001/report-loss/prepare")["error"]["code"] == "CARD_STATE_INVALID"
+
+
+def test_frozen_card_can_still_be_reported_lost(client, lin):
+    post(client, lin, "/cards/crd_001/freeze")  # 紧急止损：先冻结（protect 直接生效）
+    finish(lin, post(client, lin, "/cards/crd_001/report-loss/prepare"))
+    assert card(client, lin)["status"] == "lost"
+
+
 def test_report_loss_then_reissue_once(client, lin):
-    assert post(client, lin, "/cards/crd_001/report-loss")["data"]["card"]["status"] == "lost"
+    finish(lin, post(client, lin, "/cards/crd_001/report-loss/prepare"))
+    assert card(client, lin)["status"] == "lost"
     assert post(client, lin, "/cards/crd_001/freeze")["error"]["code"] == "CARD_STATE_INVALID"
     assert put(client, lin, "/cards/crd_001/controls", {"online": False}).json()["error"]["code"] == "CARD_STATE_INVALID"
     op = post(client, lin, "/cards/crd_001/reissue/prepare")

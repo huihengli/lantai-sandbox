@@ -238,8 +238,20 @@ def cards_freeze(card_id: str, request: Request, p: Principal = PROTECT, db: Ses
 
 @router.post("/cards/{card_id}/report-loss")
 def cards_report_loss(card_id: str, request: Request, p: Principal = PROTECT, db: Session = Depends(get_db)):
-    """挂失卡片（保护性，立即生效，不可撤销；补发走 reissue/prepare）。"""
-    return _direct(request, db, p, "card_report_loss", lambda ctx: card_svc.report_loss(ctx, p.user, card_id))
+    """挂失不可撤销，已改为需用户确认：本接口固定返回 CONFIRM_REQUIRED，指向 report-loss/prepare。"""
+    def deny(ctx):
+        card_svc.get_owned(db, p.user.id, card_id)  # 先做归属校验，非本人卡统一 404
+        raise LantaiError("CONFIRM_REQUIRED", "挂失不可撤销，需走 prepare 并由用户确认；紧急止损请先冻结卡片",
+                          {"use": f"/api/v1/cards/{card_id}/report-loss/prepare"})
+    return _direct(request, db, p, "card_report_loss", deny)
+
+
+@router.post("/cards/{card_id}/report-loss/prepare")
+def cards_report_loss_prepare(card_id: str, request: Request, body: CardOnlyIn | None = None, p: Principal = PREPARE,
+                              db: Session = Depends(get_db)):
+    body = body or CardOnlyIn()
+    body.card_id = card_id
+    return _prepare(request, db, p, "card_report_loss", body)
 
 
 @router.put("/cards/{card_id}/controls")

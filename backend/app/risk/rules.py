@@ -100,6 +100,11 @@ def card_unfreeze(c: RiskContext) -> list[dict]:
     return [reason("CARD_UNFREEZE")]
 
 
+@rule("card_report_loss")
+def card_report_loss(c: RiskContext) -> list[dict]:
+    return [reason("CARD_REPORT_LOSS")]
+
+
 @rule("card_reissue")
 def card_reissue(c: RiskContext) -> list[dict]:
     return [reason("CARD_REISSUE")]

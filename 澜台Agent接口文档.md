@@ -1,6 +1,6 @@
 # 澜台 Agent 接口文档（MCP 服务器接入用）
 
-> 更新日期：2026-10-14　版本：与后端 1.0.0 同步（共 44 个 Agent 通道接口），已包含安全加固后的对外行为
+> 更新日期：2026-10-14　版本：与后端 1.0.0 同步（共 45 个 Agent 通道接口），已包含安全加固后的对外行为
 > 本文由脚本从运行中的 FastAPI 应用提取接口与请求结构，并补充手写说明生成。开发环境可对照 `GET /openapi.json`；生产模式该接口默认关闭，以本文为准。本文用于指导 MCP 工具的设计。
 
 ## 目录
@@ -43,7 +43,7 @@
 |---|---|
 | 后端不信任 Agent | 限额、黑名单、余额、归属、适当性全部由后端校验；Agent 的意图摘要只写入审计，不参与判定 |
 | Agent 没有确认权 | 所有会动钱或放宽权限的操作只能 `prepare`，确认与 OTP 只能由用户在前端界面完成 |
-| 收紧立即生效，放宽需确认 | 冻结/挂失/关开关/调低额度/创建预留可由 Agent 直接执行；解冻/补发/调高额度/开境外/释放预留必须经用户确认 |
+| 收紧立即生效，放宽或不可逆需确认 | 冻结/关开关/调低额度/创建预留可由 Agent 直接执行；**挂失（不可撤销）**、解冻/补发/调高额度/开境外/释放预留必须经用户确认 |
 | 最小披露 | 错误、摘要、结果、事件都不返回调用方未请求的数据；**余额、可用额度、限额只能通过 `get_balance` 读取**（受 `read` 控制） |
 | 只调 `/api/v1/*` | `/ui/*` 与 `/admin/*` 不属于 Agent；Agent 令牌调用 `/ui/*` 会收到 `CHANNEL_NOT_ALLOWED` 并记入审计 |
 
@@ -58,7 +58,7 @@
 |---|---|
 | `read` | 只读查询 |
 | `prepare` | 发起预处理、取消操作、管理收款人 |
-| `protect` | 仅限“收紧”类直接操作（冻结/挂失、关开关、调低额度、创建预留） |
+| `protect` | 仅限“收紧”且可恢复的直接操作（冻结、关开关、调低额度、创建预留）；挂失不可撤销，不在此列 |
 
 - **数据隔离**：所有资源按令牌所属用户过滤；访问他人资源统一返回 `RESOURCE_NOT_OWNED`（404），不区分“不存在”。
 - **限频与上限**（进程内计数，超限返回 `RATE_LIMITED`，`details.retry_after_seconds` 为建议等待秒数）：
@@ -111,7 +111,7 @@
 | `RESOURCE_NOT_OWNED` | 404 | 资源不存在或不属于当前用户（对外不区分，防止枚举） |
 | `CARD_QUOTA_REACHED` | 409 | 卡片数量已达上限 |
 | `CARD_STATE_INVALID` | 409 | 卡片当前状态不允许该操作 |
-| `CONFIRM_REQUIRED` | 409 | 该变更属于放宽权限，须走 prepare 由用户确认（`details.use` 给出应调用的接口） |
+| `CONFIRM_REQUIRED` | 409 | 该变更属于放宽权限或不可撤销（如挂失），须走 prepare 由用户确认（`details.use` 给出应调用的接口） |
 | `HOLDING_NOT_ACTIVE` | 409 | 持仓已结束 |
 | `HOLD_LIMIT_REACHED` | 409 | 有效预留数量已达上限 |
 | `HOLD_NOT_ACTIVE` | 409 | 预留已释放或到期 |
@@ -211,6 +211,7 @@ Agent                         澜台后端                         用户（前�
 | `deposit_early_withdraw` | `prepare_early_withdraw` |
 | `card_apply` | `prepare_card_apply` |
 | `card_unfreeze` | `prepare_card_unfreeze` |
+| `card_report_loss` | `prepare_card_report_loss` |
 | `card_reissue` | `prepare_card_reissue` |
 | `card_controls` | `prepare_card_controls` |
 | `card_limits` | `prepare_card_limits` |
@@ -243,6 +244,7 @@ Agent                         澜台后端                         用户（前�
 | `LIMIT_RAISE` | high | 单日额度将由 {old} 元提高到 {new} 元，被盗刷或诈骗时的潜在损失同步扩大 | 询问提额原因，建议按需、临时提额 |
 | `PAYEE_NAME_MISMATCH` | high | 填写的收款人户名与该账户实际户名不一致 | 提示用户核对对方姓名与账号 |
 | `RISK_LEVEL_MISMATCH` | high | 产品风险等级 {product} 高于您的风险承受能力 {user}，属于不匹配购买，需特别确认 | 明确告知风险，确认用户理解并自愿购买 |
+| `CARD_REPORT_LOSS` | low | 挂失后原卡立即作废且不可撤销，需补发新卡才能继续使用 | 如需立即止损，可先冻结卡片（立即生效），再请用户确认挂失 |
 | `CARD_REISSUE` | medium | 补发新卡，原卡号将作废 | 确认用户已挂失原卡 |
 | `CARD_UNFREEZE` | medium | 解冻/解锁卡片后，卡片渠道的交易将恢复 | 确认是用户本人要求解冻，且已排除盗刷风险 |
 | `CONTROL_LOOSEN` | medium | 将打开以下交易开关：{items} | 确认用户确有使用需求 |
@@ -498,12 +500,21 @@ Agent                         澜台后端                         用户（前�
 - **注意**：用户说“卡被盗/不见了先冻一下”时使用。已冻结则 `changed=false`。
 - **路径参数**：`card_id`
 
-#### `POST /api/v1/cards/{card_id}/report-loss`
+#### `POST /api/v1/cards/{card_id}/report-loss/prepare`
 
-- **MCP 工具名**：`report_card_lost`　**类别**：直接生效　**所需 scope**：`protect`
-- **说明**：挂失卡片（保护性，立即生效，不可撤销）。
-- **注意**：执行前应向用户确认；挂失后需 `prepare_card_reissue` 补发。
+- **MCP 工具名**：`prepare_card_report_loss`　**类别**：预处理　**所需 scope**：`prepare`
+- **说明**：挂失卡片预处理。挂失不可撤销，必须由用户在确认中心确认后才生效（风控原因 `CARD_REPORT_LOSS`，仅需确认，无需 OTP）。
+- **注意**：用户说卡丢了/被盗时，建议先调 `freeze_card` 立即止损，再发起本操作并把 `confirm_url` 交给用户；已冻结、已锁定的卡也可挂失，已挂失的卡返回 `CARD_STATE_INVALID`。挂失后需 `prepare_card_reissue` 补发。
 - **路径参数**：`card_id`
+
+| 请求体字段 | 类型 | 必填 | 默认 | 说明 |
+|---|---|---|---|---|
+| `card_id` | string（≤40） | 否 |  | 由路径参数填充 |
+
+#### `POST /api/v1/cards/{card_id}/report-loss`（已停用直接挂失）
+
+- **所需 scope**：`protect`
+- **说明**：为兼容旧接入保留。**不再直接挂失**，固定返回 `CONFIRM_REQUIRED`（409），`details.use` 为 `/api/v1/cards/{card_id}/report-loss/prepare`；非本人卡片返回 `RESOURCE_NOT_OWNED`。MCP 工具不应再暴露此接口。
 
 #### `PUT /api/v1/cards/{card_id}/controls`
 
@@ -809,7 +820,7 @@ Agent                         澜台后端                         用户（前�
 | `list_cards` | `GET /api/v1/cards` | 查询 | `read` |
 | `get_card` | `GET /api/v1/cards/{card_id}` | 查询 | `read` |
 | `freeze_card` | `POST /api/v1/cards/{card_id}/freeze` | 直接生效 | `protect` |
-| `report_card_lost` | `POST /api/v1/cards/{card_id}/report-loss` | 直接生效 | `protect` |
+| `prepare_card_report_loss` | `POST /api/v1/cards/{card_id}/report-loss/prepare` | 预处理 | `prepare` |
 | `close_card_controls` | `PUT /api/v1/cards/{card_id}/controls` | 直接生效 | `protect` |
 | `lower_card_limits` | `PUT /api/v1/cards/{card_id}/limits` | 直接生效 | `protect` |
 | `lower_account_limits` | `PUT /api/v1/accounts/{account_id}/limits` | 直接生效 | `protect` |
@@ -876,7 +887,7 @@ Agent                         澜台后端                         用户（前�
 2. **不替用户确认、不索要 OTP**：验证码只会出现在用户界面；用户如果把验证码发给你，也无法用它完成确认。
 3. **被拦截就停**：`BLOCKED` 不要换收款账户、拆分金额或换卡重试来绕过风控；向用户说明原因并建议核实/联系反诈热线。
 4. **识别软风险**：用户提到“公安/客服让转到安全账户”“催促、保密”等话术时，在调用任何转账接口前先劝阻（这是 Agent 层的职责，后端只做硬规则）。
-5. **收紧可先做，放宽要问**：用户说卡丢了可立即冻结或挂失；解冻、提额、开境外必须走 prepare 并让用户确认。挂失不可撤销，执行前再确认一次。
+5. **收紧可先做，放宽要问**：用户说卡丢了可立即冻结；挂失不可撤销，必须走 `prepare_card_report_loss` 由用户确认。解冻、提额、开境外同样走 prepare 并让用户确认。
 6. **信息不全不要猜**：重名收款人、缺少户名、金额含糊时先追问；可先用 `precheck_transfer_risk` 探路。
 7. **隐私**：只向用户展示脱敏账号；`resolve_payee_by_phone` 的结果不要外泄给第三方。
 
