@@ -107,3 +107,30 @@ def test_logout_revoke_grants_covers_executor(client, lin, exe):
     op = lin.transfer("1.00")["data"]["operation_id"]
     client.post("/ui/logout", params={"revoke_grants": "true"}, headers=lin.session)
     assert client.get(f"/api/exec/operations/{op}", headers=exe).json()["error"]["code"] == "AUTH_REVOKED"
+
+
+def test_executor_results_are_trimmed_for_llm_context(client, lin, exe):
+    op = lin.transfer("500.00")["data"]["operation_id"]
+    dialog = client.get(f"/api/exec/operations/{op}", headers=exe).json()["data"]
+    assert "balance_after" in dialog["summary"]  # 确认框给用户看：完整视图
+    done = client.post(f"/api/exec/operations/{op}/confirm", headers=exe).json()["data"]
+    assert done["status"] == "EXECUTED"
+    assert "balance_after" not in done["summary"] and "balance_after" not in done["result"]  # 回写上下文：裁剪
+    rej = lin.transfer("1.00")["data"]["operation_id"]
+    out = client.post(f"/api/exec/operations/{rej}/reject", headers=exe).json()["data"]
+    assert out["status"] == "CANCELLED" and "balance_after" not in out["summary"]
+    oid = lin.transfer("100.00", payee_id=None, payee_account_no="6217000040003456", payee_name="张三")["data"]["operation_id"]
+    v = client.post(f"/api/exec/operations/{oid}/verify-otp", json={"code": "123456"}, headers=exe).json()["data"]
+    assert v["status"] == "OTP_VERIFIED" and "balance_after" not in v["summary"]
+
+
+def test_executor_risk_block_reasons_are_neutral(client, lin, exe):
+    a = lin.transfer("600.00")["data"]["operation_id"]
+    b = lin.transfer("600.00")["data"]["operation_id"]
+    client.put("/api/v1/accounts/acc_001/limits", json={"single_limit": "1000.00", "daily_limit": "1000.00"},
+               headers=lin.agent)
+    assert client.post(f"/api/exec/operations/{a}/confirm", headers=exe).json()["data"]["status"] == "EXECUTED"
+    err = client.post(f"/api/exec/operations/{b}/confirm", headers=exe).json()["error"]
+    assert err["code"] == "RISK_BLOCKED"
+    daily = next(r for r in err["details"]["reasons"] if r["code"] == "DAILY_LIMIT_EXCEEDED")
+    assert daily["params"] == {} and "600.00" not in daily["message"]  # 不向上下文泄露今日已转出

@@ -73,7 +73,7 @@ cd backend && python -m pytest -q
 3. `prepare` 返回 `operation_id`、预览、风险原因码和 `confirm_url`。Agent 引导用户打开页面。
 4. 用户在前端“确认中心”查看风险原因，需要时输入 OTP（演示固定 `123456`，只在 `/ui` 通道可见），点击确认。
 5. Agent 轮询 `GET /api/v1/operations/{id}` 得到结果。Agent 调用任何 `/ui/*` 接口都返回 `CHANNEL_NOT_ALLOWED`。
-6. 可选的**确认执行器**路径：签发 Agent 令牌时会同时得到绑定的执行器令牌（`lt_x_*`，仅 `confirm/otp`，同一授权、一起过期、一起撤销），交给 Agent 侧独立的执行器程序；执行器弹出确认框，用户手动确认（必要时输入 OTP）后调用 `/api/exec/operations/{id}/verify-otp|confirm|reject`。执行器令牌只能访问 `/api/exec`，Agent 令牌与用户会话也不能访问 `/api/exec`。详见接口文档第 12 节。
+6. 可选的**确认执行器**路径：签发 Agent 令牌时会同时得到绑定的执行器令牌（`lt_x_*`，仅 `confirm/otp`，同一授权、一起过期、一起撤销），交给 Agent 侧独立的执行器程序；LLM 调用确认工具时 interrupt，执行器弹出确认框，用户手动确认（必要时输入 OTP）后调用 `/api/exec/operations/{id}/verify-otp|confirm|reject`，返回已按 Agent 视图裁剪，可直接写回上下文。执行器令牌只能访问 `/api/exec`，Agent 令牌与用户会话也不能访问 `/api/exec`。详见接口文档第 12 节。
 
 curl 示例：
 

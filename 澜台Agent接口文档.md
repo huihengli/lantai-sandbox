@@ -1,4 +1,4 @@
-# 澜台 Agent 接口文档（MCP 服务器接入用）
+# 澜台 Agent 接口文档
 
 > 更新日期：2026-10-14　版本：与后端 1.0.0 同步（共 45 个 Agent 通道接口），已包含安全加固后的对外行为
 > 本文由脚本从运行中的 FastAPI 应用提取接口与请求结构，并补充手写说明生成。开发环境可对照 `GET /openapi.json`；生产模式该接口默认关闭，以本文为准。本文用于指导 MCP 工具的设计。
@@ -797,7 +797,7 @@ Agent                         澜台后端                         用户（前�
 
 ### 8.1 工具清单
 
-一个 Agent 接口对应一个 MCP 工具，工具名即上文的“MCP 工具名”。**不要暴露任何确认类工具**（澜台本身也不会接受 Agent 的确认）。
+一个 Agent 接口对应一个 MCP 工具，工具名即上文的“MCP 工具名”。**不要把 `/ui/*` 或 `/api/exec/*` 直接封装成 LLM 工具**；需要让 LLM 发起确认时，使用由执行器实现的确认工具 `request_user_confirmation`（见 8.4），它会 interrupt 并由用户手动确认。
 
 | 工具名 | 方法与路径 | 类别 | scope |
 |---|---|---|---|
@@ -882,15 +882,45 @@ Agent                         澜台后端                         用户（前�
 - **`get_operation` 轮询**：由 MCP 工具内部或 Agent 控制，建议 2~3 秒一次，遇终态或超过 5 分钟停止；也可改用 `get_events` 的 `operation` 事件。
 - **时间**：服务端时区由 `TIMEZONE_OFFSET` 决定（默认 +01:00），夜间规则按该时区的 0~6 点。
 
+### 8.4 确认工具 `request_user_confirmation`（由执行器实现）
+
+确认类工具**可以**出现在 LLM 的工具列表里，但它不是对银行接口的直接封装：工具被调用时触发 **interrupt**，由 Agent 侧的确认执行器（确定性 workflow）接手，用户在确认框里手动确认后，执行器才用 `executor_token` 调用 `/api/exec`。LLM 自始至终拿不到确认权。
+
+```json
+{
+  "name": "request_user_confirmation",
+  "description": "请用户确认一笔待确认操作。调用后会暂停对话并弹出确认框，由用户本人点击确认或拒绝（需要时输入短信验证码）；你无法代替用户确认。返回 status：EXECUTED / CANCELLED / BLOCKED / FAILED / EXPIRED / OTP_LOCKED，或 user_dismissed（用户关闭了确认框）。",
+  "inputSchema": {
+    "type": "object",
+    "required": ["operation_id"],
+    "additionalProperties": false,
+    "properties": {
+      "operation_id": { "type": "string", "maxLength": 40, "description": "prepare_* 返回的 operation_id" }
+    }
+  }
+}
+```
+
+| 约束 | 要求 |
+|---|---|
+| 参数 | **只接收 `operation_id`**。不得有 `approved`、`otp`、`code`、`token` 之类的参数——确认与否只来自确认框上的点击，验证码只由用户在框里输入 |
+| 凭据 | `executor_token` 在签发时就交给运行时/执行器保管，interrupt 时由运行时注入执行器；**不得**出现在 LLM 上下文、工具参数、工具返回或日志里，也不得由 LLM 传入 |
+| 确认框内容 | 用 `GET /api/exec/operations/{id}` 的完整视图渲染（摘要含 `balance_after`、全部 `risk.reasons.message`、是否需要 OTP、到期时间）。该响应**只给用户看，不写回上下文** |
+| 调用次数 | 每次 interrupt 只走一遍 workflow：需要时 `verify-otp`，然后 `confirm` 或 `reject` 各一次。即使重复调用，后端也保证同一操作只执行一次 |
+| 用户关闭/超时 | 调 `reject`，或不调用任何接口让操作 5 分钟后自然过期；向上下文写回 `user_dismissed` |
+| 写回上下文 | 直接使用 `verify-otp` / `confirm` / `reject` 的返回即可：这三个接口**已按 Agent 视图裁剪**（无 `balance_after`，敏感风控原因中性化）。失败时写回 `error.code` 与 `error.message`；`RISK_BLOCKED` 的 `details.reasons` 同样已中性化 |
+| OTP 错误 | `OTP_INVALID` 时可在同一确认框内让用户重输（`details.attempts_left`）；`OTP_LOCKED` 后操作终止，需重新 prepare |
+
 ## 9. Agent 行为守则
 
 1. **先解释再引导**：prepare 之后向用户复述收款方/金额/手续费，说明每条 `reasons[].message`，再给出 `confirm_url`。不要说“已转账”，只有 `status=EXECUTED` 才算完成。
-2. **不替用户确认、不索要 OTP**：验证码只会出现在用户界面；用户如果把验证码发给你，也无法用它完成确认。
+2. **不替用户确认、不索要 OTP**：验证码只会出现在用户界面或确认框中；用户如果把验证码发给你，也无法用它完成确认。需要确认时调用 `request_user_confirmation`，由用户在确认框中决定。
 3. **被拦截就停**：`BLOCKED` 不要换收款账户、拆分金额或换卡重试来绕过风控；向用户说明原因并建议核实/联系反诈热线。
 4. **识别软风险**：用户提到“公安/客服让转到安全账户”“催促、保密”等话术时，在调用任何转账接口前先劝阻（这是 Agent 层的职责，后端只做硬规则）。
 5. **收紧可先做，放宽要问**：用户说卡丢了可立即冻结；挂失不可撤销，必须走 `prepare_card_report_loss` 由用户确认。解冻、提额、开境外同样走 prepare 并让用户确认。
 6. **信息不全不要猜**：重名收款人、缺少户名、金额含糊时先追问；可先用 `precheck_transfer_risk` 探路。收到 `PAYEE_NOT_FOUND` 时请用户核对账号与完整户名，**不要自行尝试其他写法的名字**。
 7. **隐私**：只向用户展示脱敏账号；`resolve_payee_by_phone` 的结果不要外泄给第三方。
+8. **尊重用户的确认结果**：`request_user_confirmation` 返回 `CANCELLED` 或 `user_dismissed` 时视为用户拒绝，不得立即重新 prepare 同一操作、反复弹框或劝说用户改变决定；只有用户主动再次提出时才重新发起。返回 `BLOCKED` / `FAILED` 时按守则 3 处理，不要换方式重试。
 
 ## 10. 演示数据速查
 
@@ -912,17 +942,17 @@ Agent                         澜台后端                         用户（前�
 
 ## 11. 不属于 Agent 的接口
 
-以下接口由用户界面或演示管理使用，**不应做成 MCP 工具**；Agent 令牌调用 `/ui/*` 会被拒绝并记入审计。
+以下接口**不应直接做成 LLM 可调用的 MCP 工具**；Agent 令牌调用 `/ui/*`、`/api/exec/*` 会被拒绝并记入审计。
 
 | 前缀 | 用途 | 说明 |
 |---|---|---|
 | `/ui/*` | 登录（含防暴破限频）、退出（可同时撤销全部 Agent / 执行器令牌）、签发/撤销 Agent 授权（可同时签发绑定的执行器令牌）、查看待确认操作、OTP 提示与验证、**确认/拒绝**、提交风险测评、审计 | 仅 `user_session`；生产模式下 `otp-hint` 关闭 |
-| `/api/exec/*` | 确认执行器：拉取操作详情、提交验证码、确认/拒绝 | 仅 `executor_token`（`lt_x_*`），见第 12 节；不应做成 LLM 可调用的 MCP 工具 |
+| `/api/exec/*` | 确认执行器：拉取操作详情、提交验证码、确认/拒绝 | 仅 `executor_token`（`lt_x_*`），见第 12 节。只能由执行器 workflow 在用户手动确认后调用；LLM 通过确认工具 `request_user_confirmation`（8.4）间接触发 |
 | `/admin/*` | 重置数据、模拟时钟、黑名单、模拟商户扣款、调整净值、锁定卡片 | 需 `X-Admin-Key`，仅演示；生产模式默认关闭（`NOT_FOUND`），启用时要求强随机密钥 |
 
 ## 12. 确认执行器通道 `/api/exec`
 
-用于 Agent 侧的**确认执行器**：一个独立于 LLM 的确定性程序。Agent 完成 `prepare` 后把 `operation_id` 交给执行器，执行器拉取操作详情、**弹出确认框由用户手动确认**（需要时让用户输入短信验证码），再调用本通道。
+用于 Agent 侧的**确认执行器**：Agent 的一部分，但是独立于 LLM 的确定性 workflow。LLM 调用确认工具 `request_user_confirmation(operation_id)`（见 8.4）时触发 interrupt，执行器接手：拉取操作详情、**弹出确认框由用户手动确认**（需要时让用户输入短信验证码），调用本通道，再把结果写回 Agent 上下文，LLM 继续流程。
 
 ### 12.1 凭据与隔离
 
@@ -952,27 +982,32 @@ Agent 运行时拿到两枚令牌后：`agent_token` 交给 LLM 使用的 MCP �
 | 接口 | scope | 说明 |
 |---|---|---|
 | `GET /api/exec/operations/{op_id}` | `confirm` | 渲染确认框用。内容与用户确认中心一致：`summary`（含 `balance_after`）、完整风控文案、`status`（`OTP_PENDING` 表示需要验证码）、`expires_at` |
-| `POST /api/exec/operations/{op_id}/verify-otp` | `otp` | body：`{"code": "123456"}`，提交用户在确认框输入的验证码；错误返回 `OTP_INVALID`（`details.attempts_left`），3 次后 `OTP_LOCKED`；每用户 10 分钟错 10 次后 `RATE_LIMITED` |
-| `POST /api/exec/operations/{op_id}/confirm` | `confirm` | 用户点击“确认”后调用。与 `/ui` 确认相同：重新风控、重新校验余额与状态，同一操作只执行一次；需要 OTP 而未验证时返回 `OTP_REQUIRED` |
-| `POST /api/exec/operations/{op_id}/reject` | `confirm` | 用户点击“拒绝”后调用，操作置为 `CANCELLED` |
+| `POST /api/exec/operations/{op_id}/verify-otp` | `otp` | body：`{"code": "123456"}`，提交用户在确认框输入的验证码；返回按 Agent 视图裁剪；错误返回 `OTP_INVALID`（`details.attempts_left`），3 次后 `OTP_LOCKED`；每用户 10 分钟错 10 次后 `RATE_LIMITED` |
+| `POST /api/exec/operations/{op_id}/confirm` | `confirm` | 用户点击“确认”后调用。与 `/ui` 确认相同：重新风控、重新校验余额与状态，同一操作只执行一次；需要 OTP 而未验证时返回 `OTP_REQUIRED`。返回按 Agent 视图裁剪（无 `balance_after`），确认时风控复核拦截返回 `RISK_BLOCKED`，其 `details.reasons` 已中性化 |
+| `POST /api/exec/operations/{op_id}/reject` | `confirm` | 用户点击“拒绝”后调用，操作置为 `CANCELLED`；返回按 Agent 视图裁剪 |
 
-非本人操作统一返回 `OPERATION_NOT_FOUND`（404）。确认结果与 `/ui` 相同，Agent 仍可用 `get_operation` 或事件流查询结果（Agent 视图按最小披露裁剪）。
+非本人操作统一返回 `OPERATION_NOT_FOUND`（404）。
+
+**视图规则**：只有 `GET` 详情返回完整视图（给用户看的确认框）；`verify-otp` / `confirm` / `reject` 的返回会写回 LLM 上下文，因此与 Agent 通道的 `get_operation` 一样按最小披露裁剪，执行器可原样写回。
 
 ### 12.4 推荐流程
 
 ```
-LLM Agent                 确认执行器（独立程序）              用户                澜台
- │ prepare_xxx ──────────────────────────────────────────────────────────────▶ │
- │ ◀─────────────────────────────────────────────────── operation_id ────────── │
- │ 交出 operation_id ──▶ │ GET /api/exec/operations/{id} ──────────────────────▶ │
- │                       │ 弹出确认框（摘要 + 风控原因）──▶ │                     │
- │                       │ ◀──── 确认 / 拒绝（+ 验证码）─── │                     │
- │                       │ [verify-otp] → confirm 或 reject ───────────────────▶ │
- │ ◀── 只回传最终状态 ── │                                                       │
+LLM                        确认执行器（workflow）               用户                澜台
+ │ prepare_xxx ───────────────────────────────────────────────────────────────▶ │
+ │ ◀──────────────────────────────────────────────────── operation_id ────────── │
+ │ request_user_confirmation(operation_id)
+ │   └─ interrupt ──────▶ │ 运行时注入 executor_token
+ │                        │ GET /api/exec/operations/{id} ──────────────────────▶ │
+ │                        │ 弹出确认框（完整摘要 + 风控原因）──▶ │                │
+ │                        │ ◀──── 确认 / 拒绝 / 关闭（+ 验证码）── │                │
+ │                        │ [verify-otp] → confirm 或 reject（各一次）──────────▶ │
+ │ ◀── 写回裁剪后的结果 ── │                                                        │
+ │ 继续对话
 ```
 
 - 执行器**必须**在用户实际点击后才调用 `confirm`，不得根据 Agent 的输出自动确认；确认框应展示 `summary` 与全部 `risk.reasons.message`。
-- 执行器回传给 LLM 的内容建议只保留 `status` 与流水号等必要字段，不要回传 `balance_after` 等余额信息。
+- 执行器可把 `verify-otp` / `confirm` / `reject` 的返回原样写回上下文（已裁剪）；**不要**把 `GET` 详情的完整视图写回。
 - 用户在银行确认中心（`/ui`）的确认流程保持可用，两条路径互不影响，状态以后端为准。
 
 ---

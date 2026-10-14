@@ -54,17 +54,18 @@ _AGENT_NEUTRAL = {
 _AGENT_STRIP = ("balance_after",)
 
 
-def _agent_view(out: dict) -> dict:
-    """按 Agent 通道裁剪：去掉余额类字段，敏感风控原因改为中性文案并清空 params。"""
+def neutral_reasons(reasons: list[dict]) -> list[dict]:
+    """敏感风控原因改为中性文案并清空 params（供会进入 LLM 上下文的响应使用）。"""
+    return [{**r, "message": _AGENT_NEUTRAL[r["code"]][0], "agent_hint": _AGENT_NEUTRAL[r["code"]][1], "params": {}}
+            if r["code"] in _AGENT_NEUTRAL else r for r in reasons]
+
+
+def trim_for_llm(out: dict) -> dict:
+    """按 Agent 视图裁剪：去掉余额类字段、中性化敏感风控原因。Agent 通道与执行器回写结果共用。"""
     out["summary"] = {k: v for k, v in out["summary"].items() if k not in _AGENT_STRIP}
     if "result" in out and isinstance(out["result"], dict):
         out["result"] = {k: v for k, v in out["result"].items() if k not in _AGENT_STRIP}
-    reasons = []
-    for r in out["risk"].get("reasons", []):
-        if r["code"] in _AGENT_NEUTRAL:
-            r = {**r, "message": _AGENT_NEUTRAL[r["code"]][0], "agent_hint": _AGENT_NEUTRAL[r["code"]][1], "params": {}}
-        reasons.append(r)
-    out["risk"] = {**out["risk"], "reasons": reasons}
+    out["risk"] = {**out["risk"], "reasons": neutral_reasons(out["risk"].get("reasons", []))}
     return out
 
 
@@ -79,7 +80,7 @@ def view(op: PendingOperation, actor: str = "user") -> dict:
         out["confirm_url"] = f"{config.FRONTEND_BASE_URL}/confirm/{op.id}"
     if op.result_json:
         out["result"] = json.loads(op.result_json)
-    return _agent_view(out) if actor == "agent" else out
+    return trim_for_llm(out) if actor == "agent" else out
 
 
 def emit_status(db: Session, op: PendingOperation) -> None:
@@ -194,7 +195,9 @@ def confirm(ctx: audit.Ctx, user: User, op_id: str) -> dict:
         op.status = "BLOCKED"
         emit_status(db, op)
         db.commit()
-        raise LantaiError("RISK_BLOCKED", "确认时风控复核未通过", {"reasons": risk["reasons"]})
+        # 执行器通道的结果会回写进 Agent 上下文，原因按 Agent 视图中性化
+        reasons = neutral_reasons(risk["reasons"]) if ctx.channel == "exec" else risk["reasons"]
+        raise LantaiError("RISK_BLOCKED", "确认时风控复核未通过", {"reasons": reasons})
     if risk["required_action"] == "otp" and op.status != "OTP_VERIFIED":
         if op.status != "OTP_PENDING":
             op.status = "OTP_PENDING"
