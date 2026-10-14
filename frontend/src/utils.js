@@ -60,7 +60,7 @@ export const CATEGORY = {
   autopay: "自动扣款", salary: "工资", fee: "手续费", other: "消费", wealth_out: "理财申购", wealth_in: "理财赎回",
 };
 
-export const ACTOR = { agent: "智能助手", user: "用户", system: "系统", admin: "管理", unknown: "未知" };
+export const ACTOR = { agent: "智能助手", executor: "确认执行器", user: "用户", system: "系统", admin: "管理", unknown: "未知" };
 
 /** 把后端 summary 的英文键翻成中文标签 */
 export const SUMMARY_LABEL = {

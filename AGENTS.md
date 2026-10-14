@@ -46,7 +46,7 @@ infra/      compose.yml（PostgreSQL + 后端）
 **核心设计（必须理解后再动手）**
 
 - **通道隔离**：Agent 令牌（`lt_a_*`，kind=`agent_token`）只能访问 `/api/v1`；用户会话（`lt_u_*`，kind=`user_session`）访问 `/ui`；确认执行器令牌（`lt_x_*`，kind=`executor_token`）**只能**访问 `/api/exec`（`executor_only=True`）。跨通道调用一律 `CHANNEL_NOT_ALLOWED`。
-- **scope**：用户全集 `read/prepare/protect/confirm/otp/grant`；Agent 最多持有 `read/prepare/protect`（`AGENT_ALLOWED_SCOPES`）。**Agent 令牌永远不能拥有 `confirm`、`otp`、`grant`。** 确认能力只发给独立的执行器令牌（`EXECUTOR_ALLOWED_SCOPES = confirm/otp`），由 Agent 侧的确定性执行器程序持有，弹出确认框经用户手动确认后才调用，不得交给 LLM；执行器令牌不得包含 `read/prepare/protect/grant`。
+- **scope**：用户全集 `read/prepare/protect/confirm/otp/grant`；Agent 最多持有 `read/prepare/protect`（`AGENT_ALLOWED_SCOPES`）。**Agent 令牌永远不能拥有 `confirm`、`otp`、`grant`。** 确认能力只发给独立的执行器令牌（`EXECUTOR_ALLOWED_SCOPES = confirm/otp`，随 Agent 授权一起签发、`issued_by` 指向所属授权、一起过期与撤销），由 Agent 侧的确定性执行器程序持有，弹出确认框经用户手动确认后才调用，不得交给 LLM；执行器令牌不得包含 `read/prepare/protect/grant`。
 - **两阶段确认**：有资金/权益风险的操作先 `prepare`（产出 `operation_id`、预览、风险原因码、`confirm_url`），由**用户在 UI 通道或执行器确认框中手动**确认（必要时 OTP）后才执行。仅"收紧/保护类"（冻结、挂失、调低额度、关开关、创建资金预留）可由 Agent 凭 `protect` 直接生效；**放宽类一律走 prepare + 用户确认**。
 - **金额**：库内整数"分"，接口层字符串两位小数，经 `money.parse_amount / fmt`；禁止使用 float。
 - **时间**：一律走 `app.clock`，不得直接 `datetime.now()`（否则演示时钟与测试失效）。

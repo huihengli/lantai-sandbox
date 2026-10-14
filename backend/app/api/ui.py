@@ -1,6 +1,6 @@
 """用户通道 /ui：登录、授权 Agent、OTP、确认。Agent 令牌无权调用这里的任何接口。"""
 import json
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -9,7 +9,7 @@ from app.api.common import ok
 from app.db import get_db
 from app.errors import LantaiError
 from app.models import AuditLog, AuthToken, User
-from app.schemas import ExecutorGrantIn, GrantIn, LoginIn, OtpIn, RiskAnswersIn
+from app.schemas import GrantIn, LoginIn, OtpIn, RiskAnswersIn
 from app.security import auth, ratelimit
 from app.security.auth import Principal, make_ctx, require
 from app.services import audit, events, idempotency, operation, risk_profile
@@ -84,19 +84,30 @@ def create_grant(body: GrantIn, request: Request, p: Principal = Depends(require
         ttl = min(body.ttl_seconds or config.AGENT_TOKEN_TTL_SECONDS, config.AGENT_TOKEN_MAX_TTL_SECONDS)
         token, row = auth.issue_token(db, "agent_token", p.user.id, sorted(set(body.scopes)), ttl,
                                       issued_by=p.token.id)
-        audit.log(ctx, "grant_agent_token", detail={"grant_id": row.id, "scopes": body.scopes})
-        return {"grant_id": row.id, "agent_token": token, "scopes": sorted(set(body.scopes)),
-                "expires_at": clock.iso(row.expires_at)}
+        out = {"grant_id": row.id, "agent_token": token, "scopes": sorted(set(body.scopes)),
+               "expires_at": clock.iso(row.expires_at)}
+        if body.with_executor:
+            # 执行器令牌挂在同一授权下（issued_by=授权编号），有效期一致；只能调用 /api/exec，须由执行器程序保管
+            ex_token, ex_row = auth.issue_token(db, "executor_token", p.user.id,
+                                                sorted(auth.EXECUTOR_ALLOWED_SCOPES), ttl, issued_by=row.id)
+            ex_row.expires_at = row.expires_at
+            out.update(executor_token=ex_token, executor_scopes=sorted(auth.EXECUTOR_ALLOWED_SCOPES))
+        audit.log(ctx, "grant_agent_token", detail={"grant_id": row.id, "scopes": body.scopes,
+                                                    "with_executor": body.with_executor})
+        return out
 
     return ok(request, audit.guarded(ctx, "grant_agent_token", run))
 
 
 @router.get("/agent-grants")
 def list_grants(request: Request, p: Principal = READ, db: Session = Depends(get_db)):
-    rows = db.scalars(select(AuthToken).where(AuthToken.user_id == p.user.id, AuthToken.kind == "agent_token")
-                      .order_by(AuthToken.created_at.desc()).limit(50))
+    rows = list(db.scalars(select(AuthToken).where(AuthToken.user_id == p.user.id, AuthToken.kind == "agent_token")
+                           .order_by(AuthToken.created_at.desc()).limit(50)))
+    with_exec = set(db.scalars(select(AuthToken.issued_by).where(
+        AuthToken.user_id == p.user.id, AuthToken.kind == "executor_token",
+        AuthToken.issued_by.in_([r.id for r in rows])))) if rows else set()
     return ok(request, [{"grant_id": r.id, "scopes": r.scopes.split(","), "expires_at": clock.iso(r.expires_at),
-                         "revoked": r.revoked_at is not None} for r in rows])
+                         "executor": r.id in with_exec, "revoked": r.revoked_at is not None} for r in rows])
 
 
 @router.delete("/agent-grants/{grant_id}")
@@ -108,54 +119,15 @@ def revoke_grant(grant_id: str, request: Request, p: Principal = Depends(require
         row = db.get(AuthToken, grant_id)
         if row is None or row.user_id != p.user.id or row.kind != "agent_token":
             raise LantaiError("RESOURCE_NOT_OWNED", "授权不存在")
-        row.revoked_at = row.revoked_at or clock.now()
+        now = clock.now()
+        row.revoked_at = row.revoked_at or now
+        for ex in db.scalars(select(AuthToken).where(AuthToken.user_id == p.user.id, AuthToken.kind == "executor_token",
+                                                     AuthToken.issued_by == grant_id)):
+            ex.revoked_at = ex.revoked_at or now  # 绑定的执行器令牌一起撤销
         audit.log(ctx, "revoke_agent_token", detail={"grant_id": grant_id})
         return {"grant_id": grant_id, "revoked": True}
 
     return ok(request, audit.guarded(ctx, "revoke_agent_token", run))
-
-
-@router.post("/executor-grants")
-def create_executor_grant(body: ExecutorGrantIn, request: Request,
-                          p: Principal = Depends(require("grant", ui_only=True)), db: Session = Depends(get_db)):
-    """签发确认执行器令牌（只含 confirm/otp，只能调用 /api/exec）。须交给执行器程序保管，不得交给 LLM。"""
-    ctx = make_ctx(request, db, p)
-
-    def run():
-        scopes = sorted(set(body.scopes))
-        bad = set(scopes) - auth.EXECUTOR_ALLOWED_SCOPES
-        if bad or not scopes:
-            raise LantaiError("SCOPE_INSUFFICIENT", f"执行器令牌只能包含 confirm/otp，拒绝: {sorted(bad)}")
-        ttl = min(body.ttl_seconds or config.EXECUTOR_TOKEN_TTL_SECONDS, config.EXECUTOR_TOKEN_MAX_TTL_SECONDS)
-        token, row = auth.issue_token(db, "executor_token", p.user.id, scopes, ttl, issued_by=p.token.id)
-        audit.log(ctx, "grant_executor_token", detail={"grant_id": row.id, "scopes": scopes})
-        return {"grant_id": row.id, "executor_token": token, "scopes": scopes, "expires_at": clock.iso(row.expires_at)}
-
-    return ok(request, audit.guarded(ctx, "grant_executor_token", run))
-
-
-@router.get("/executor-grants")
-def list_executor_grants(request: Request, p: Principal = READ, db: Session = Depends(get_db)):
-    rows = db.scalars(select(AuthToken).where(AuthToken.user_id == p.user.id, AuthToken.kind == "executor_token")
-                      .order_by(AuthToken.created_at.desc()).limit(50))
-    return ok(request, [{"grant_id": r.id, "scopes": r.scopes.split(","), "expires_at": clock.iso(r.expires_at),
-                         "revoked": r.revoked_at is not None} for r in rows])
-
-
-@router.delete("/executor-grants/{grant_id}")
-def revoke_executor_grant(grant_id: str, request: Request, p: Principal = Depends(require("grant", ui_only=True)),
-                          db: Session = Depends(get_db)):
-    ctx = make_ctx(request, db, p)
-
-    def run():
-        row = db.get(AuthToken, grant_id)
-        if row is None or row.user_id != p.user.id or row.kind != "executor_token":
-            raise LantaiError("RESOURCE_NOT_OWNED", "授权不存在")
-        row.revoked_at = row.revoked_at or clock.now()
-        audit.log(ctx, "revoke_executor_token", detail={"grant_id": grant_id})
-        return {"grant_id": grant_id, "revoked": True}
-
-    return ok(request, audit.guarded(ctx, "revoke_executor_token", run))
 
 
 @router.get("/operations")
@@ -206,8 +178,13 @@ def audit_row(r: AuditLog) -> dict:
 
 
 @router.get("/audit")
-def my_audit(request: Request, p: Principal = READ, db: Session = Depends(get_db)):
-    rows = db.scalars(select(AuditLog).where(AuditLog.user_id == p.user.id).order_by(AuditLog.id.desc()).limit(100))
+def my_audit(request: Request, actor: str | None = Query(None, pattern="^(user|agent|executor)$"),
+             p: Principal = READ, db: Session = Depends(get_db)):
+    """actor 可选：只看用户 / 智能助手 / 确认执行器发起的记录（服务端过滤，不受 100 条截断影响）。"""
+    stmt = select(AuditLog).where(AuditLog.user_id == p.user.id)
+    if actor:
+        stmt = stmt.where(AuditLog.actor == actor)
+    rows = db.scalars(stmt.order_by(AuditLog.id.desc()).limit(100))
     return ok(request, [audit_row(r) for r in rows])
 
 

@@ -916,7 +916,7 @@ Agent                         澜台后端                         用户（前�
 
 | 前缀 | 用途 | 说明 |
 |---|---|---|
-| `/ui/*` | 登录（含防暴破限频）、退出（可同时撤销全部 Agent / 执行器令牌）、签发/撤销 Agent 令牌与执行器令牌、查看待确认操作、OTP 提示与验证、**确认/拒绝**、提交风险测评、审计 | 仅 `user_session`；生产模式下 `otp-hint` 关闭 |
+| `/ui/*` | 登录（含防暴破限频）、退出（可同时撤销全部 Agent / 执行器令牌）、签发/撤销 Agent 授权（可同时签发绑定的执行器令牌）、查看待确认操作、OTP 提示与验证、**确认/拒绝**、提交风险测评、审计 | 仅 `user_session`；生产模式下 `otp-hint` 关闭 |
 | `/api/exec/*` | 确认执行器：拉取操作详情、提交验证码、确认/拒绝 | 仅 `executor_token`（`lt_x_*`），见第 12 节；不应做成 LLM 可调用的 MCP 工具 |
 | `/admin/*` | 重置数据、模拟时钟、黑名单、模拟商户扣款、调整净值、锁定卡片 | 需 `X-Admin-Key`，仅演示；生产模式默认关闭（`NOT_FOUND`），启用时要求强随机密钥 |
 
@@ -928,20 +928,24 @@ Agent                         澜台后端                         用户（前�
 
 | 项 | 规则 |
 |---|---|
-| 令牌 | `executor_token`，明文前缀 `lt_x_`，授权编号前缀 `exe_`；由用户在 `/ui` 签发，明文只返回一次 |
-| scope | 只能是 `confirm`、`otp` 的子集（默认两者都有）；不能包含 `read/prepare/protect/grant` |
+| 令牌 | `executor_token`，明文前缀 `lt_x_`；**随 Agent 授权一起签发**（同一授权编号 `grt_…`、同一有效期），明文只在签发时返回一次 |
+| scope | 固定为 `confirm`、`otp`；不能包含 `read/prepare/protect/grant` |
 | 通道 | **只能**调用 `/api/exec/*`；调用 `/api/v1/*` 或 `/ui/*` 返回 `CHANNEL_NOT_ALLOWED`。Agent 令牌与用户会话调用 `/api/exec/*` 同样返回 `CHANNEL_NOT_ALLOWED` |
-| 有效期 | 默认 30 分钟，最长 60 分钟；可在 `/ui` 单独撤销；`POST /ui/logout?revoke_grants=true` 会一并撤销 |
+| 有效期与撤销 | 与所属 Agent 令牌完全一致：一起过期；撤销该 Agent 授权（`DELETE /ui/agent-grants/{grant_id}`）或 `POST /ui/logout?revoke_grants=true` 时一起失效。只需管理一个授权 |
 | 保管 | **只能由执行器程序持有，不得出现在 LLM 的上下文、工具参数或日志里**。LLM 侧的 Agent 令牌仍然没有 `confirm/otp`，因此即使被提示注入也无法跳过确认框 |
-| 审计 | `actor = executor`，`channel = exec`，与用户在确认中心的操作可区分 |
+| 审计 | `actor = executor`，`channel = exec`；Agent 与执行器的审计记录 `detail.grant_id` 均为同一授权编号，可据此关联“哪个 Agent 发起、经哪个执行器确认”。用户可在审计页按“确认执行器”筛选（`GET /ui/audit?actor=executor`） |
 
 ### 12.2 签发与管理（用户通道，需用户会话）
 
+执行器令牌没有单独的授权接口，随 Agent 授权一起管理：
+
 | 接口 | scope | 说明 |
 |---|---|---|
-| `POST /ui/executor-grants` | `grant` | body：`{"scopes": ["confirm","otp"], "ttl_seconds": 1800}`（均可省略）；返回 `grant_id`、`executor_token`、`scopes`、`expires_at` |
-| `GET /ui/executor-grants` | `read` | 列出执行器授权（不含令牌明文） |
-| `DELETE /ui/executor-grants/{grant_id}` | `grant` | 撤销；只能撤销执行器授权，传 Agent 授权编号返回 `RESOURCE_NOT_OWNED` |
+| `POST /ui/agent-grants` | `grant` | body：`{"scopes": [...], "ttl_seconds": 1800, "with_executor": true}`；`with_executor` 默认 `true`。返回 `grant_id`、`agent_token`、`scopes`、`expires_at`，以及 `executor_token`、`executor_scopes`（`with_executor=false` 时不返回） |
+| `GET /ui/agent-grants` | `read` | 每条授权多一个 `executor` 布尔字段，表示是否绑定了执行器令牌（不含任何令牌明文） |
+| `DELETE /ui/agent-grants/{grant_id}` | `grant` | 撤销授权，Agent 令牌与绑定的执行器令牌同时失效 |
+
+Agent 运行时拿到两枚令牌后：`agent_token` 交给 LLM 使用的 MCP 工具，`executor_token` 只交给执行器模块。
 
 ### 12.3 执行器接口
 

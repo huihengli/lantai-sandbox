@@ -41,6 +41,7 @@ class Actor:
         self.session = {"Authorization": "Bearer " + r["data"]["session_token"]}
         g = client.post("/ui/agent-grants", json={"scopes": ["read", "prepare", "protect"]}, headers=self.session).json()
         self.agent = {"Authorization": "Bearer " + g["data"]["agent_token"]}
+        self.executor = {"Authorization": "Bearer " + g["data"]["executor_token"]}  # 同一授权下的确认执行器令牌
         self.grant_id = g["data"]["grant_id"]
 
     def transfer(self, amount, payee_id="pye_001", frm="acc_001", **extra):

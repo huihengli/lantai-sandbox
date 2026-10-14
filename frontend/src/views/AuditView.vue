@@ -1,6 +1,6 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { PhRobot, PhUser, PhGearSix, PhQuestion } from "@phosphor-icons/vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { PhRobot, PhUser, PhGearSix, PhQuestion, PhCursorClick } from "@phosphor-icons/vue";
 import PageHeader from "../components/PageHeader.vue";
 import { api } from "../api";
 import { ACTOR, errorText, fmtTime } from "../utils";
@@ -11,7 +11,7 @@ const result = ref("");
 const error = ref("");
 let timer;
 
-const ICON = { agent: PhRobot, user: PhUser, system: PhGearSix, admin: PhGearSix, unknown: PhQuestion };
+const ICON = { agent: PhRobot, executor: PhCursorClick, user: PhUser, system: PhGearSix, admin: PhGearSix, unknown: PhQuestion };
 const RESULT = { ok: ["成功", "ok"], rejected: ["被拒绝", "bad"], blocked: ["被拦截", "blocked"], error: ["错误", "bad"] };
 const ACTION = {
   login: "登录", logout: "退出", grant_agent_token: "签发 Agent 令牌", revoke_agent_token: "撤销 Agent 令牌",
@@ -24,11 +24,13 @@ const actionText = (a) => {
   return (ACTION[base] || { prepare: "预处理", confirm: "确认执行" }[base] || base) + (t ? ` · ${t}` : "");
 };
 
-const filtered = computed(() => rows.value.filter((r) => (!actor.value || r.actor === actor.value) && (!result.value || r.result === result.value)));
+// 发起方由服务端过滤（避免只在最近 100 条里筛），结果在本地筛
+const filtered = computed(() => rows.value.filter((r) => !result.value || r.result === result.value));
 
 async function load() {
-  try { rows.value = await api.audit(); } catch (e) { error.value = errorText(e); }
+  try { rows.value = await api.audit(actor.value); error.value = ""; } catch (e) { error.value = errorText(e); }
 }
+watch(actor, load);
 onMounted(() => { load(); timer = setInterval(() => !document.hidden && load(), 5000); });
 onBeforeUnmount(() => clearInterval(timer));
 </script>
@@ -40,6 +42,7 @@ onBeforeUnmount(() => clearInterval(timer));
     <div class="seg" role="group" aria-label="按发起方">
       <button type="button" :aria-pressed="actor === ''" @click="actor = ''">全部</button>
       <button type="button" :aria-pressed="actor === 'agent'" @click="actor = 'agent'">智能助手</button>
+      <button type="button" :aria-pressed="actor === 'executor'" @click="actor = 'executor'">确认执行器</button>
       <button type="button" :aria-pressed="actor === 'user'" @click="actor = 'user'">用户</button>
     </div>
     <div class="seg" role="group" aria-label="按结果">
@@ -61,10 +64,11 @@ onBeforeUnmount(() => clearInterval(timer));
             <span class="num muted time">{{ fmtTime(r.ts, true) }}</span>
           </div>
           <div class="row" style="gap: 8px">
-            <span class="tag" :class="r.actor === 'agent' ? 'gold' : 'muted'">{{ ACTOR[r.actor] || r.actor }}</span>
+            <span class="tag" :class="r.actor === 'agent' ? 'gold' : r.actor === 'executor' ? 'ok' : 'muted'">{{ ACTOR[r.actor] || r.actor }}</span>
             <span class="tag" :class="RESULT[r.result]?.[1] || 'muted'">{{ RESULT[r.result]?.[0] || r.result }}</span>
             <code v-if="r.error_code" class="err">{{ r.error_code }}</code>
             <code v-if="r.operation_id" class="muted">{{ r.operation_id }}</code>
+            <code v-if="r.detail?.grant_id" class="muted" title="所属授权编号">{{ r.detail.grant_id }}</code>
           </div>
           <p v-if="r.detail?.message" class="muted msg">{{ r.detail.message }}</p>
           <details v-if="r.risk || r.detail" class="more">

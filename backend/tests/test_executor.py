@@ -4,25 +4,27 @@ import pytest
 from tests.conftest import Actor
 
 
-def grant(client, who, scopes=None):
-    body = {} if scopes is None else {"scopes": scopes}
-    return client.post("/ui/executor-grants", json=body, headers=who.session).json()
+def grant(client, who, **body):
+    return client.post("/ui/agent-grants", json=body, headers=who.session).json()
 
 
 @pytest.fixture()
 def exe(client, lin):
+    return lin.executor
+
+
+def test_one_grant_issues_both_tokens(client, lin):
     g = grant(client, lin)["data"]
-    assert g["executor_token"].startswith("lt_x_") and g["scopes"] == ["confirm", "otp"]
-    return {"Authorization": "Bearer " + g["executor_token"]}
-
-
-def test_executor_grant_scopes_are_limited(client, lin):
-    for bad in (["read"], ["prepare"], ["confirm", "grant"], []):
-        assert grant(client, lin, bad)["error"]["code"] in ("SCOPE_INSUFFICIENT", "VALIDATION_ERROR")
-    assert grant(client, lin, ["confirm"])["data"]["scopes"] == ["confirm"]
-    # Agent 令牌仍然拿不到 confirm/otp，也不能签发执行器令牌
-    assert client.post("/ui/agent-grants", json={"scopes": ["confirm"]}, headers=lin.session).json()["error"]["code"] == "SCOPE_INSUFFICIENT"
-    assert client.post("/ui/executor-grants", json={}, headers=lin.agent).json()["error"]["code"] == "CHANNEL_NOT_ALLOWED"
+    assert g["agent_token"].startswith("lt_a_") and g["executor_token"].startswith("lt_x_")
+    assert g["executor_scopes"] == ["confirm", "otp"] and "confirm" not in g["scopes"]
+    only = grant(client, lin, with_executor=False)["data"]
+    assert "executor_token" not in only
+    listed = {x["grant_id"]: x for x in client.get("/ui/agent-grants", headers=lin.session).json()["data"]}
+    assert listed[g["grant_id"]]["executor"] is True and listed[only["grant_id"]]["executor"] is False
+    assert "executor_token" not in listed[g["grant_id"]] and "agent_token" not in listed[g["grant_id"]]  # 明文只返回一次
+    # Agent 令牌仍然拿不到 confirm/otp；单独的执行器授权接口已移除
+    assert grant(client, lin, scopes=["confirm"])["error"]["code"] == "SCOPE_INSUFFICIENT"
+    assert client.post("/ui/executor-grants", json={}, headers=lin.session).status_code in (404, 405)
 
 
 def test_channels_are_isolated(client, lin, exe):
@@ -62,13 +64,6 @@ def test_executor_otp_flow(client, lin, exe):
     assert client.post(f"/api/exec/operations/{oid}/confirm", headers=exe).json()["data"]["status"] == "EXECUTED"
 
 
-def test_confirm_only_executor_cannot_submit_otp(client, lin):
-    h = {"Authorization": "Bearer " + grant(client, lin, ["confirm"])["data"]["executor_token"]}
-    oid = lin.transfer("100.00", payee_id=None, payee_account_no="6217000040003456", payee_name="张三")["data"]["operation_id"]
-    r = client.post(f"/api/exec/operations/{oid}/verify-otp", json={"code": "123456"}, headers=h)
-    assert r.status_code == 403 and r.json()["error"]["code"] == "SCOPE_INSUFFICIENT"
-
-
 def test_executor_reject(client, lin, exe):
     op = lin.transfer("100.00")["data"]["operation_id"]
     assert client.post(f"/api/exec/operations/{op}/reject", headers=exe).json()["data"]["status"] == "CANCELLED"
@@ -85,17 +80,27 @@ def test_executor_cannot_touch_other_users_operations(client, lin, exe):
         assert r.status_code == 404 and r.json()["error"]["code"] == "OPERATION_NOT_FOUND"
 
 
-def test_executor_token_revocation(client, lin):
+def test_revoking_agent_grant_revokes_its_executor(client, lin):
     g = grant(client, lin)["data"]
+    agent = {"Authorization": "Bearer " + g["agent_token"]}
     h = {"Authorization": "Bearer " + g["executor_token"]}
     op = lin.transfer("1.00")["data"]["operation_id"]
     assert client.get(f"/api/exec/operations/{op}", headers=h).status_code == 200
-    listed = client.get("/ui/executor-grants", headers=lin.session).json()["data"]
-    assert listed[0]["grant_id"] == g["grant_id"] and "executor_token" not in listed[0]  # 明文只返回一次
-    assert client.delete(f"/ui/executor-grants/{g['grant_id']}", headers=lin.session).json()["data"]["revoked"]
+    assert client.delete(f"/ui/agent-grants/{g['grant_id']}", headers=lin.session).json()["data"]["revoked"]
     assert client.get(f"/api/exec/operations/{op}", headers=h).json()["error"]["code"] == "AUTH_REVOKED"
-    # 不能用执行器接口撤销 Agent 授权，反之亦然
-    assert client.delete(f"/ui/executor-grants/{lin.grant_id}", headers=lin.session).json()["error"]["code"] == "RESOURCE_NOT_OWNED"
+    assert client.get("/api/v1/accounts", headers=agent).json()["error"]["code"] == "AUTH_REVOKED"
+    assert client.get(f"/api/exec/operations/{op}", headers=lin.executor).status_code == 200  # 其他授权不受影响
+
+
+def test_audit_links_executor_to_grant_and_filters(client, lin):
+    op = lin.transfer("1.00")["data"]["operation_id"]
+    client.post(f"/api/exec/operations/{op}/confirm", headers=lin.executor)
+    only = client.get("/ui/audit", params={"actor": "executor"}, headers=lin.session).json()["data"]
+    assert only and {r["actor"] for r in only} == {"executor"}
+    assert only[0]["detail"]["grant_id"] == lin.grant_id  # 与发起 prepare 的 Agent 同一授权编号
+    agent_rows = client.get("/ui/audit", params={"actor": "agent"}, headers=lin.session).json()["data"]
+    assert any(r["detail"] and r["detail"].get("grant_id") == lin.grant_id for r in agent_rows)
+    assert client.get("/ui/audit", params={"actor": "admin"}, headers=lin.session).status_code == 422
 
 
 def test_logout_revoke_grants_covers_executor(client, lin, exe):

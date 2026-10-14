@@ -45,11 +45,7 @@ class LoginIn(BaseModel):
 class GrantIn(BaseModel):
     scopes: list[str] = Field(max_length=5, default=["read", "prepare", "protect"])
     ttl_seconds: int | None = Field(None, gt=0)
-
-
-class ExecutorGrantIn(BaseModel):
-    scopes: list[str] = Field(max_length=2, default=["confirm", "otp"])
-    ttl_seconds: int | None = Field(None, gt=0)
+    with_executor: bool = True  # 同时签发绑定的确认执行器令牌（同一授权、同一有效期、一起撤销）
 
 
 class OtpIn(BaseModel):

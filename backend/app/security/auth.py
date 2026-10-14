@@ -20,7 +20,8 @@ from app.services import audit, deposit
 
 USER_SCOPES = ["read", "prepare", "protect", "confirm", "otp", "grant"]
 AGENT_ALLOWED_SCOPES = {"read", "prepare", "protect"}  # protect：仅限收紧类（保护性）直接操作
-# 确认执行器：独立于 LLM Agent 的确定性程序，弹出确认框由用户手动确认后才调用；令牌只能用于 /api/exec
+# 确认执行器：Agent 侧独立于 LLM 的确定性程序，弹出确认框由用户手动确认后才调用；令牌只能用于 /api/exec。
+# 执行器令牌随 Agent 授权一起签发（同一授权编号、同一有效期、一起撤销），但必须与 LLM 隔离保管
 EXECUTOR_ALLOWED_SCOPES = {"confirm", "otp"}
 _ACTOR = {"agent_token": "agent", "executor_token": "executor", "user_session": "user"}
 _PREFIX = {"user_session": ("lt_u_", "ses"), "agent_token": ("lt_a_", "grt"), "executor_token": ("lt_x_", "exe")}
@@ -151,7 +152,12 @@ def client_info(request: Request) -> dict:
 
 def make_ctx(request: Request, db: Session, p: Principal, agent_intent: str | None = None) -> audit.Ctx:
     return audit.Ctx(db, request.state.request_id, p.user.id, p.actor,
-                     channel_of(request.url.path), agent_intent, **client_info(request))
+                     channel_of(request.url.path), agent_intent, grant_id=grant_of(p.token), **client_info(request))
+
+
+def grant_of(token: AuthToken) -> str | None:
+    """Agent 令牌的授权编号即自身 id；执行器令牌挂在所属 Agent 授权下（issued_by）。"""
+    return {"agent_token": token.id, "executor_token": token.issued_by}.get(token.kind)
 
 
 def expired(dt: datetime) -> bool:

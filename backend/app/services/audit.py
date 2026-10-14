@@ -22,11 +22,14 @@ class Ctx:
     channel: str  # api / ui / admin
     agent_intent: str | None = None
     ip: str | None = None
+    grant_id: str | None = None
     ua: str | None = None
 
 
 def log(ctx: Ctx, action: str, result: str = "ok", operation_id: str | None = None,
         risk: dict | None = None, error_code: str | None = None, detail: dict | None = None) -> None:
+    if ctx.grant_id:  # Agent / 执行器所属授权编号，二者相同即同一授权
+        detail = {**(detail or {}), "grant_id": ctx.grant_id}
     if ctx.ip or ctx.ua:  # 来源信息放入 detail，避免改表结构
         detail = {**(detail or {}), "client": {"ip": ctx.ip, "ua": (ctx.ua or "")[:120]}}
     ctx.db.add(AuditLog(

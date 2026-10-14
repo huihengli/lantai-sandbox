@@ -15,7 +15,7 @@ export const api = {
   verifyOtp: (id, code) => request("POST", `/ui/operations/${id}/verify-otp`, { body: { code } }),
   confirm: (id) => request("POST", `/ui/operations/${id}/confirm`),
   reject: (id) => request("POST", `/ui/operations/${id}/reject`),
-  audit: () => request("GET", "/ui/audit"),
+  audit: (actor) => request("GET", "/ui/audit", { query: { actor } }),
 
   // ---- 业务通道 /api/v1（用户会话同样可用） ----
   me: () => request("GET", "/api/v1/me"),
