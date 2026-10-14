@@ -28,7 +28,8 @@
 | 最小披露 | `INSUFFICIENT_BALANCE` 不再带 `balance/available`，文案不再区分“可用余额不足/余额不足” | 需要余额时调用 `get_balance`；不要从错误里解析数字 |
 | 最小披露 | Agent 视图的 `summary`、`result` 不含 `balance_after`；事件流不含余额；`create_hold` 不再返回 `available_after` | 对账改用 `get_balance` 与事件里的金额/流水号 |
 | 最小披露 | `DAILY_LIMIT_EXCEEDED`、`CARD_LIMIT_EXCEEDED`、`AUTOPAY_AT_RISK` 对 Agent 只给中性文案，`params` 为空 | 不要依赖这三个原因里的具体金额；需要时查询余额/代扣协议 |
-| 防探测 | 添加收款人：账户不存在、户名不符、命中黑名单统一返回 `PAYEE_NOT_FOUND` | 不要据此判断具体原因；`PAYEE_NAME_MISMATCH` 不再由添加收款人返回 |
+| 户名强制核验 | 行内转账（prepare / precheck / 确认时）户名必须与收款账户户名完全一致，否则拒绝 | 户名不符与账户不存在返回同一个 `PAYEE_NOT_FOUND`；请让用户核对完整户名，不要猜测或反复试名字 |
+| 防探测 | 添加收款人：账户不存在、户名不符、命中黑名单统一返回 `PAYEE_NOT_FOUND` | 不要据此判断具体原因；`PAYEE_NAME_MISMATCH` 不再返回 |
 | 限频与上限 | 新增：每令牌每分钟 300 次、转账预处理/预检每用户 10 分钟 60 次、添加收款人 10 分钟 20 次、同时待处理操作 20 笔、请求体 64 KB | 处理 `RATE_LIMITED`（读 `details.retry_after_seconds`）、`TOO_MANY_PENDING`、HTTP 413 `PAYLOAD_TOO_LARGE` |
 | 输入校验 | 所有字符串字段增加最大长度（见各接口参数表）；`Idempotency-Key` ≤100 字符；LIKE 类过滤（`keyword`/`counterparty`/`q`）中的 `%` `_` 按字面匹配 | 超长返回 `VALIDATION_ERROR` |
 | 风控口径 | 单日转出额度统计纳入卡片/商户支付；黑名单匹配不再限定银行 | `DAILY_LIMIT_EXCEEDED` 可能比以前更早出现 |
@@ -108,7 +109,7 @@
 | `MERCHANT_NOT_FOUND` | 404 | 商户不存在 |
 | `NOT_FOUND` | 404 | 接口不存在（含生产模式下被关闭的演示接口） |
 | `OPERATION_NOT_FOUND` | 404 | 操作不存在 |
-| `PAYEE_NOT_FOUND` | 404 | 收款人/收款账户/手机号不存在，或缺少户名；**添加收款人失败时统一返回**，不区分账户不存在/户名不符/黑名单 |
+| `PAYEE_NOT_FOUND` | 404 | 收款人/收款账户/手机号不存在，或缺少户名；**行内转账户名不符、添加收款人失败时也统一返回**，不区分账户不存在/户名不符/黑名单 |
 | `RESOURCE_NOT_OWNED` | 404 | 资源不存在或不属于当前用户（对外不区分，防止枚举） |
 | `CARD_QUOTA_REACHED` | 409 | 卡片数量已达上限 |
 | `CARD_STATE_INVALID` | 409 | 卡片当前状态不允许该操作 |
@@ -129,7 +130,7 @@
 | `AMOUNT_INVALID` | 422 | 金额或份额格式不合法（须为字符串，最多两位小数，大于 0） |
 | `CURRENCY_UNSUPPORTED` | 422 | 仅支持 CNY |
 | `INSUFFICIENT_BALANCE` | 422 | 可用余额（余额 − 资金预留）不足。`message` 固定为“余额不足”（创建预留时为“余额不足以预留该金额”），`details` 为空，**不返回任何余额数字**；需要时调用 `get_balance` |
-| `PAYEE_NAME_MISMATCH` | 422 | 保留码：目前添加收款人不再返回它（统一为 `PAYEE_NOT_FOUND`）；转账时户名不符体现为风控原因 `PAYEE_NAME_MISMATCH` |
+| `PAYEE_NAME_MISMATCH` | 422 | 保留码：目前不再返回。行内转账与添加收款人的户名不符都统一为 `PAYEE_NOT_FOUND` |
 | `PRODUCT_NOT_AVAILABLE` | 422 | 产品不存在或已下架 |
 | `SAME_ACCOUNT` | 422 | 转给同一账户 / 本人账户无需添加为收款人 |
 | `VALIDATION_ERROR` | 422 | 参数校验失败（缺字段、格式不对、取值非法、字段超长、`Idempotency-Key` 超过 100 字符） |
@@ -243,7 +244,6 @@ Agent                         澜台后端                         用户（前�
 | `HIGH_BALANCE_RATIO` | high | 本次转出超过账户余额的 {ratio} | 询问资金用途，留意是否被诱导清空账户 |
 | `LARGE_AMOUNT` | high | 金额达到大额交易标准（{threshold} 元） | 提醒用户再次确认金额 |
 | `LIMIT_RAISE` | high | 单日额度将由 {old} 元提高到 {new} 元，被盗刷或诈骗时的潜在损失同步扩大 | 询问提额原因，建议按需、临时提额 |
-| `PAYEE_NAME_MISMATCH` | high | 填写的收款人户名与该账户实际户名不一致 | 提示用户核对对方姓名与账号 |
 | `RISK_LEVEL_MISMATCH` | high | 产品风险等级 {product} 高于您的风险承受能力 {user}，属于不匹配购买，需特别确认 | 明确告知风险，确认用户理解并自愿购买 |
 | `CARD_REPORT_LOSS` | low | 挂失后原卡立即作废且不可撤销，需补发新卡才能继续使用 | 如需立即止损，可先冻结卡片（立即生效），再请用户确认挂失 |
 | `CARD_REISSUE` | medium | 补发新卡，原卡号将作废 | 确认用户已挂失原卡 |
@@ -391,14 +391,14 @@ Agent                         澜台后端                         用户（前�
 
 - **MCP 工具名**：`prepare_transfer`　**类别**：预处理　**所需 scope**：`prepare`
 - **说明**：转账预处理：校验、风控评估并创建待确认操作。收款方三选一：`payee_id` / `payee_account_no`+`payee_name` / `payee_phone`+`payee_name`。
-- **注意**：返回后必须引导用户到 `confirm_url` 确认；Agent 无法确认。风控拦截时仍返回 200，`status=BLOCKED`。Agent 视图的 `summary` 不含 `balance_after`；余额不足只返回 `INSUFFICIENT_BALANCE`，不带具体余额。每用户 10 分钟最多 60 次转账预处理/预检，同时待处理操作最多 20 笔（超限 `TOO_MANY_PENDING`）。
+- **注意**：**户名强制核验**：收款方为澜台行内账户时（含 `payee_id`、账号、手机号三种方式），户名必须与账户实际户名完全一致，否则直接返回 404 `PAYEE_NOT_FOUND`（“收款账号与户名不符或账户不可用，请核对”，`details` 为空，与账户不存在不可区分），不会创建操作；用户确认时会再次核验。他行账户无户名数据，不做核验。返回后必须引导用户到 `confirm_url` 确认；Agent 无法确认。风控拦截时仍返回 200，`status=BLOCKED`。Agent 视图的 `summary` 不含 `balance_after`；余额不足只返回 `INSUFFICIENT_BALANCE`，不带具体余额。每用户 10 分钟最多 60 次转账预处理/预检，同时待处理操作最多 20 笔（超限 `TOO_MANY_PENDING`）。
 
 | 请求体字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
 | `from_account_id` | string（≤40） | 是 |  | 付款账户 id，如 acc_001 |
 | `payee_id` | string（≤40） | 否 |  | 已保存收款人 id |
 | `payee_account_no` | string（≤32） | 否 |  | 收款账号（16 位） |
-| `payee_name` | string（≤64） | 否 |  | 收款人完整户名，用于核验 |
+| `payee_name` | string（≤64） | 否 |  | 收款人完整户名；行内账户强制核验，不符则拒绝 |
 | `payee_phone` | string（≤20） | 否 |  | 收款人手机号（11 位，仅澜台用户）并需同时提供 payee_name |
 | `bank_code` | string（≤20） | 否 |  | LANTAI（行内，默认）/ OTHER（他行） |
 | `bank_name` | string（≤40） | 否 |  | 他行名称，缺省“他行” |
@@ -426,14 +426,14 @@ Agent                         澜台后端                         用户（前�
 
 - **MCP 工具名**：`precheck_transfer_risk`　**类别**：查询　**所需 scope**：`read`
 - **说明**：只评估转账风险，不创建操作、不扣款。
-- **注意**：用户还在犹豫或信息不全时先探路，例如提前发现黑名单收款方。请求体与 `prepare_transfer` 相同；与 prepare 共用每用户 10 分钟 60 次的探测额度。
+- **注意**：用户还在犹豫或信息不全时先探路，例如提前发现黑名单收款方。请求体与 `prepare_transfer` 相同，同样强制核验行内户名（不符返回 `PAYEE_NOT_FOUND`）；与 prepare 共用每用户 10 分钟 60 次的探测额度。
 
 | 请求体字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
 | `from_account_id` | string（≤40） | 是 |  | 付款账户 id，如 acc_001 |
 | `payee_id` | string（≤40） | 否 |  | 已保存收款人 id |
 | `payee_account_no` | string（≤32） | 否 |  | 收款账号（16 位） |
-| `payee_name` | string（≤64） | 否 |  | 收款人完整户名，用于核验 |
+| `payee_name` | string（≤64） | 否 |  | 收款人完整户名；行内账户强制核验，不符则拒绝 |
 | `payee_phone` | string（≤20） | 否 |  | 收款人手机号（11 位，仅澜台用户）并需同时提供 payee_name |
 | `bank_code` | string（≤20） | 否 |  | LANTAI（行内，默认）/ OTHER（他行） |
 | `bank_name` | string（≤40） | 否 |  | 他行名称，缺省“他行” |
@@ -851,7 +851,7 @@ Agent                         澜台后端                         用户（前�
 ```json
 {
   "name": "prepare_transfer",
-  "description": "转账预处理：校验并做风控评估，创建待确认操作。不会扣款。返回 operation_id、预览、风险原因码和 confirm_url；必须引导用户打开 confirm_url 确认。收款方三选一：payee_id / (payee_account_no+payee_name) / (payee_phone+payee_name)。",
+  "description": "转账预处理：校验并做风控评估，创建待确认操作。不会扣款。返回 operation_id、预览、风险原因码和 confirm_url；必须引导用户打开 confirm_url 确认。收款方三选一：payee_id / (payee_account_no+payee_name) / (payee_phone+payee_name)。澜台行内账户强制核验户名，户名不符与账户不存在都返回 PAYEE_NOT_FOUND，此时应请用户核对完整户名，不要猜测。",
   "inputSchema": {
     "type": "object",
     "required": ["from_account_id", "amount"],
@@ -859,7 +859,7 @@ Agent                         澜台后端                         用户（前�
       "from_account_id": { "type": "string", "description": "付款账户 id，如 acc_001" },
       "payee_id": { "type": "string", "description": "已保存收款人 id" },
       "payee_account_no": { "type": "string" },
-      "payee_name": { "type": "string", "maxLength": 64, "description": "收款人完整户名，用于核验" },
+      "payee_name": { "type": "string", "maxLength": 64, "description": "收款人完整户名；行内账户强制核验，不符则拒绝" },
       "payee_phone": { "type": "string", "description": "11 位手机号（澜台用户）" },
       "bank_code": { "type": "string", "description": "LANTAI（默认，行内）或 OTHER（他行）" },
       "amount": { "type": "string", "maxLength": 24, "pattern": "^\\d{1,12}(\\.\\d{1,2})?$", "description": "金额，字符串，最多两位小数" },
@@ -889,7 +889,7 @@ Agent                         澜台后端                         用户（前�
 3. **被拦截就停**：`BLOCKED` 不要换收款账户、拆分金额或换卡重试来绕过风控；向用户说明原因并建议核实/联系反诈热线。
 4. **识别软风险**：用户提到“公安/客服让转到安全账户”“催促、保密”等话术时，在调用任何转账接口前先劝阻（这是 Agent 层的职责，后端只做硬规则）。
 5. **收紧可先做，放宽要问**：用户说卡丢了可立即冻结；挂失不可撤销，必须走 `prepare_card_report_loss` 由用户确认。解冻、提额、开境外同样走 prepare 并让用户确认。
-6. **信息不全不要猜**：重名收款人、缺少户名、金额含糊时先追问；可先用 `precheck_transfer_risk` 探路。
+6. **信息不全不要猜**：重名收款人、缺少户名、金额含糊时先追问；可先用 `precheck_transfer_risk` 探路。收到 `PAYEE_NOT_FOUND` 时请用户核对账号与完整户名，**不要自行尝试其他写法的名字**。
 7. **隐私**：只向用户展示脱敏账号；`resolve_payee_by_phone` 的结果不要外泄给第三方。
 
 ## 10. 演示数据速查
@@ -902,7 +902,7 @@ Agent                         澜台后端                         用户（前�
 | 测试1 的账户 | `acc_001` 活期 50,800.00；`acc_002` 储蓄 120,000.00；单笔限额 50,000，单日 100,000 |
 | 测试1 的卡 | `crd_001`（acc_001）、`crd_002`（acc_002）；单笔 20,000 / 单日 50,000；线上、ATM 开，境外关 |
 | 收款人 | `pye_001` 李四（行内，已转过）、`pye_002` 王五（他行，已转过） |
-| 新收款人演示 | 账号 `6217000040003456`，户名 `张三`（写成“张山”触发户名不符） |
+| 新收款人演示 | 账号 `6217000040003456`，户名 `张三`（写成“张山”会被拒绝：`PAYEE_NOT_FOUND`） |
 | 黑名单 | 他行账号 `6222000088886666`（刘某某），`bank_code=OTHER` |
 | 定期 | 产品 `prd_3m / prd_6m / prd_12m / prd_36m`；持有 `hld_001`（2 万，已过 30 天） |
 | 代扣协议 | `apy_001` 房东 3500、`apy_002` 信用卡中心 2000、`apy_003` 澜视频会员 25、`apy_004` 澜云盘 9、`apy_005` 澜音乐 15 |

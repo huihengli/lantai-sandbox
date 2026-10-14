@@ -109,8 +109,9 @@ curl -s localhost:8001/api/v1/transfers/prepare -H "Authorization: Bearer $AGENT
 | `NIGHT_TRANSACTION` | 先把时钟设为 02:30 再转 500 |
 | `AUTOPAY_AT_RISK` | `acc_001` 转 46,000 |
 | `CROSS_BANK_FEE` | 转王五 5,000（手续费 5.00） |
-| `PAYEE_NAME_MISMATCH` | 向 `6217000040003456` 转账但户名写“张山” |
 | `EARLY_WITHDRAW_LOSS` | 对 `hld_001` 发起提前支取 |
+
+> 行内转账强制户名核验：向 `6217000040003456` 转账但户名写“张山”会直接被拒绝（`PAYEE_NOT_FOUND`，与账户不存在同一错误），不再作为风控提示。
 
 ## 能力清单（按模块，对应 `澜台基础能力边界.md`）
 

@@ -42,11 +42,6 @@ def new_payee(c: RiskContext) -> list[dict]:
     return [reason("NEW_PAYEE")] if c.is_new_payee else []
 
 
-@rule("transfer")
-def payee_name_mismatch(c: RiskContext) -> list[dict]:
-    return [reason("PAYEE_NAME_MISMATCH")] if c.name_mismatch else []
-
-
 @rule("transfer", "deposit_create", "merchant_payment", "wealth_subscribe")
 def large_amount(c: RiskContext) -> list[dict]:
     if c.amount_cents >= config.LARGE_AMOUNT_CENTS:

@@ -60,7 +60,7 @@ const presets = [
   { key: "blacklist", name: "黑名单收款方", rule: "BLACKLIST_HIT", effect: "拦截" },
   { key: "single", name: "超单笔限额", rule: "SINGLE_LIMIT_EXCEEDED", effect: "拦截" },
   { key: "newpayee", name: "首次转账新收款人", rule: "NEW_PAYEE", effect: "OTP" },
-  { key: "mismatch", name: "户名与账号不符", rule: "PAYEE_NAME_MISMATCH", effect: "OTP" },
+  { key: "mismatch", name: "户名与账号不符", rule: "PAYEE_NOT_FOUND", effect: "拒绝" },
   { key: "large", name: "大额转账 5 万", rule: "LARGE_AMOUNT", effect: "OTP" },
   { key: "ratio", name: "超余额 80%", rule: "HIGH_BALANCE_RATIO", effect: "OTP" },
   { key: "cross", name: "跨行转账手续费", rule: "CROSS_BANK_FEE", effect: "提示" },

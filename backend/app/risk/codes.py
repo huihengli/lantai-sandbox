@@ -13,7 +13,6 @@ CATALOG: dict[str, tuple[str, str, str]] = {
     "LARGE_AMOUNT": ("high", "金额达到大额交易标准（{threshold} 元）", "提醒用户再次确认金额"),
     "HIGH_BALANCE_RATIO": ("high", "本次转出超过账户余额的 {ratio}", "询问资金用途，留意是否被诱导清空账户"),
     "RAPID_REPEAT": ("medium", "{window} 分钟内已发生多笔转出", "询问是否被人催促连续转账"),
-    "PAYEE_NAME_MISMATCH": ("high", "填写的收款人户名与该账户实际户名不一致", "提示用户核对对方姓名与账号"),
     "NIGHT_TRANSACTION": ("low", "当前为夜间时段（0~6 点）", "提示用户确认是否本人操作"),
     "AUTOPAY_AT_RISK": ("low", "转出后余额可能不足以覆盖 {days} 天内的自动扣款（{items}）",
                         "告知具体扣款项与日期"),

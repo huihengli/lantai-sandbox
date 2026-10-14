@@ -59,8 +59,9 @@ def build_plan(db: Session, user: User, params: dict, now, lock: bool = False) -
     if bank == HOME_BANK:
         target = db.scalar(select(Account).where(Account.account_no == payee["account_no"],
                                                  Account.bank_code == HOME_BANK))
-        if target is None or target.status != "active":
-            raise LantaiError("PAYEE_NOT_FOUND", "收款账户不存在或不可用")
+        # 行内强制户名核验；账户不存在/不可用与户名不符统一为同一错误，避免形成户名探测 oracle
+        if target is None or target.status != "active" or target.user.name != payee["name"]:
+            raise LantaiError("PAYEE_NOT_FOUND", "收款账号与户名不符或账户不可用，请核对")
     if lock:
         acct.lock_accounts(db, *[i for i in (params["from_account_id"], target.id if target else None) if i])
     acc = acct.get_owned_account(db, user.id, params["from_account_id"])
@@ -73,12 +74,10 @@ def build_plan(db: Session, user: User, params: dict, now, lock: bool = False) -
     own_target = target is not None and target.user_id == user.id
     payee_row = db.get(Payee, payee["payee_id"]) if payee["payee_id"] else None
     is_new = not own_target and (payee_row is None or payee_row.first_paid_at is None)
-    name_mismatch = (target is not None and not own_target and payee_row is None
-                     and target.user.name != payee["name"])
     hit = db.scalar(select(Blacklist.id).where(Blacklist.account_no == payee["account_no"])) is not None  # 不限银行，防换行绕过
 
     rctx = engine.build_context(db, user.id, acc, "transfer", amount, now, fee_cents=fee,
-                                is_new_payee=is_new, blacklist_hit=hit, name_mismatch=name_mismatch,
+                                is_new_payee=is_new, blacklist_hit=hit,
                                 cross_bank=bank != HOME_BANK)
     summary = {
         "from": f"{acct.TYPE_LABEL.get(acc.type, acc.type)} {mask(acc.account_no)}",

@@ -73,6 +73,6 @@ def test_transfer_by_phone_requires_full_name(client, lin):
     assert ok["data"]["summary"]["to"] == "张三 ****3456"
     assert "PAYEE_NAME_MISMATCH" not in [x["code"] for x in ok["data"]["risk"]["reasons"]]
     bad = lin.transfer("500.00", payee_id=None, payee_phone="13600000003", payee_name="张山")
-    assert "PAYEE_NAME_MISMATCH" in [x["code"] for x in bad["data"]["risk"]["reasons"]]
+    assert bad["error"]["code"] == "PAYEE_NOT_FOUND"
     assert lin.transfer("500.00", payee_id=None, payee_phone="13600000003")["error"]["code"] == "PAYEE_NOT_FOUND"
     assert lin.transfer("500.00", payee_id=None, payee_phone="13000000000", payee_name="x")["error"]["code"] == "PAYEE_NOT_FOUND"

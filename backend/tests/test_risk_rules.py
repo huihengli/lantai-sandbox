@@ -82,9 +82,19 @@ def test_cross_bank_fee(lin):
     assert lin.balance() == "45795.00"
 
 
-def test_name_mismatch(lin):
-    r = lin.transfer("1000.00", payee_id=None, payee_account_no="6217000040003456", payee_name="张山")
-    assert "PAYEE_NAME_MISMATCH" in codes(r)
+def test_name_mismatch_rejected(client, lin):
+    """行内转账强制户名核验：户名不符直接拒绝，且与账户不存在返回同一错误（防探测）。"""
+    body = {"from_account_id": "acc_001", "amount": "1000.00", "payee_account_no": "6217000040003456"}
+    bad = client.post("/api/v1/transfers/prepare", json={**body, "payee_name": "张山"}, headers=lin.agent)
+    none = client.post("/api/v1/transfers/prepare", headers=lin.agent,
+                       json={**body, "payee_account_no": "6217000099999999", "payee_name": "张三"})
+    assert bad.status_code == none.status_code == 404
+    assert bad.json()["error"] == none.json()["error"]
+    assert bad.json()["error"]["code"] == "PAYEE_NOT_FOUND" and bad.json()["error"]["details"] == {}
+    pre = client.post("/api/v1/risk/precheck", json={**body, "payee_name": "张山"}, headers=lin.agent).json()
+    assert pre["error"]["code"] == "PAYEE_NOT_FOUND"
+    ok = lin.transfer("1000.00", payee_id=None, payee_account_no="6217000040003456", payee_name="张三")
+    assert ok["ok"] and ok["data"]["summary"]["to"] == "张三 ****3456"
 
 
 def test_early_withdraw_loss(client, lin):
