@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 
 from app import config
-from app.api import admin, ui, v1
+from app.api import admin, executor, ui, v1
 from app.db import SessionLocal, create_tables, schema_problems
 from app.errors import LantaiError
 from app.models import User
@@ -110,6 +110,7 @@ def healthz():
 
 
 app.include_router(v1.router)
+app.include_router(executor.router)
 app.include_router(ui.router)
 app.include_router(admin.router)
 

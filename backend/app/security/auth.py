@@ -20,6 +20,14 @@ from app.services import audit, deposit
 
 USER_SCOPES = ["read", "prepare", "protect", "confirm", "otp", "grant"]
 AGENT_ALLOWED_SCOPES = {"read", "prepare", "protect"}  # protect：仅限收紧类（保护性）直接操作
+# 确认执行器：独立于 LLM Agent 的确定性程序，弹出确认框由用户手动确认后才调用；令牌只能用于 /api/exec
+EXECUTOR_ALLOWED_SCOPES = {"confirm", "otp"}
+_ACTOR = {"agent_token": "agent", "executor_token": "executor", "user_session": "user"}
+_PREFIX = {"user_session": ("lt_u_", "ses"), "agent_token": ("lt_a_", "grt"), "executor_token": ("lt_x_", "exe")}
+
+
+def channel_of(path: str) -> str:
+    return "ui" if path.startswith("/ui") else "exec" if path.startswith("/api/exec") else "api"
 
 
 @dataclass
@@ -34,7 +42,7 @@ class Principal:
 
     @property
     def actor(self) -> str:
-        return "agent" if self.token.kind == "agent_token" else "user"
+        return _ACTOR.get(self.token.kind, "user")
 
 
 LEGACY_ITERATIONS = 10_000  # 旧格式 "salt$digest" 的迭代次数
@@ -78,10 +86,11 @@ def _hash_token(token: str) -> str:
 
 def issue_token(db: Session, kind: str, user_id: str, scopes: list[str], ttl_seconds: int,
                 issued_by: str | None = None) -> tuple[str, AuthToken]:
-    plain = ("lt_u_" if kind == "user_session" else "lt_a_") + secrets.token_urlsafe(24)
+    prefix, id_prefix = _PREFIX[kind]
+    plain = prefix + secrets.token_urlsafe(24)
     now = clock.now()
     row = AuthToken(
-        id=new_id("grt" if kind == "agent_token" else "ses"), token_hash=_hash_token(plain),
+        id=new_id(id_prefix), token_hash=_hash_token(plain),
         kind=kind, user_id=user_id, scopes=",".join(scopes), issued_by=issued_by,
         expires_at=now + timedelta(seconds=ttl_seconds), created_at=now,
     )
@@ -92,15 +101,16 @@ def issue_token(db: Session, kind: str, user_id: str, scopes: list[str], ttl_sec
 def _deny(db: Session, request: Request, code: str, message: str, user_id: str | None = None,
           actor: str = "agent") -> LantaiError:
     ctx = audit.Ctx(db, getattr(request.state, "request_id", ""), user_id, actor,
-                    "ui" if request.url.path.startswith("/ui") else "api", **client_info(request))
+                    channel_of(request.url.path), **client_info(request))
     audit.log(ctx, f"access_denied {request.method} {request.url.path}", "rejected", error_code=code,
               detail={"message": message})
     db.commit()
     return LantaiError(code, message)
 
 
-def require(scope: str | None = None, ui_only: bool = False):
-    """FastAPI 依赖工厂。ui_only=True 表示仅允许用户通道令牌（user_session）。"""
+def require(scope: str | None = None, ui_only: bool = False, executor_only: bool = False):
+    """FastAPI 依赖工厂。ui_only=True 仅允许用户会话；executor_only=True 仅允许确认执行器令牌。
+    执行器令牌只能访问 executor_only 接口，其余通道一律拒绝。"""
 
     def dependency(request: Request, db: Session = Depends(get_db)) -> Principal:
         header = request.headers.get("authorization", "")
@@ -109,7 +119,7 @@ def require(scope: str | None = None, ui_only: bool = False):
         row = db.scalar(select(AuthToken).where(AuthToken.token_hash == _hash_token(header[7:].strip())))
         if row is None:
             raise _deny(db, request, "AUTH_INVALID", "令牌无效", actor="unknown")
-        actor = "agent" if row.kind == "agent_token" else "user"
+        actor = _ACTOR.get(row.kind, "user")
         if row.revoked_at is not None:
             raise _deny(db, request, "AUTH_REVOKED", "令牌已被撤销", row.user_id, actor)
         if row.expires_at <= clock.now():
@@ -117,6 +127,10 @@ def require(scope: str | None = None, ui_only: bool = False):
         if ui_only and row.kind != "user_session":
             raise _deny(db, request, "CHANNEL_NOT_ALLOWED",
                         "该接口仅限用户界面通道，Agent 令牌不可调用", row.user_id, actor)
+        if executor_only and row.kind != "executor_token":
+            raise _deny(db, request, "CHANNEL_NOT_ALLOWED", "该接口仅限确认执行器令牌调用", row.user_id, actor)
+        if row.kind == "executor_token" and not executor_only:
+            raise _deny(db, request, "CHANNEL_NOT_ALLOWED", "确认执行器令牌只能调用 /api/exec 接口", row.user_id, actor)
         scopes = set(row.scopes.split(","))
         if scope and scope not in scopes:
             raise _deny(db, request, "SCOPE_INSUFFICIENT", f"令牌缺少 {scope} 权限", row.user_id, actor)
@@ -137,7 +151,7 @@ def client_info(request: Request) -> dict:
 
 def make_ctx(request: Request, db: Session, p: Principal, agent_intent: str | None = None) -> audit.Ctx:
     return audit.Ctx(db, request.state.request_id, p.user.id, p.actor,
-                     "ui" if request.url.path.startswith("/ui") else "api", agent_intent, **client_info(request))
+                     channel_of(request.url.path), agent_intent, **client_info(request))
 
 
 def expired(dt: datetime) -> bool:

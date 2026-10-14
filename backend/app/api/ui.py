@@ -9,7 +9,7 @@ from app.api.common import ok
 from app.db import get_db
 from app.errors import LantaiError
 from app.models import AuditLog, AuthToken, User
-from app.schemas import GrantIn, LoginIn, OtpIn, RiskAnswersIn
+from app.schemas import ExecutorGrantIn, GrantIn, LoginIn, OtpIn, RiskAnswersIn
 from app.security import auth, ratelimit
 from app.security.auth import Principal, make_ctx, require
 from app.services import audit, events, idempotency, operation, risk_profile
@@ -55,14 +55,15 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
 
 @router.post("/logout")
 def logout(request: Request, revoke_grants: bool = False, p: Principal = READ, db: Session = Depends(get_db)):
-    """revoke_grants=true 时同时撤销该用户全部未过期的 Agent 令牌。"""
+    """revoke_grants=true 时同时撤销该用户全部未撤销的 Agent 令牌与确认执行器令牌。"""
     ctx = make_ctx(request, db, p)
 
     def run():
         now = clock.now()
         p.token.revoked_at = now
         if revoke_grants:
-            for t in db.scalars(select(AuthToken).where(AuthToken.user_id == p.user.id, AuthToken.kind == "agent_token",
+            for t in db.scalars(select(AuthToken).where(AuthToken.user_id == p.user.id,
+                                                        AuthToken.kind.in_(("agent_token", "executor_token")),
                                                         AuthToken.revoked_at.is_(None))):
                 t.revoked_at = now
         audit.log(ctx, "logout", detail={"revoke_grants": revoke_grants})
@@ -112,6 +113,49 @@ def revoke_grant(grant_id: str, request: Request, p: Principal = Depends(require
         return {"grant_id": grant_id, "revoked": True}
 
     return ok(request, audit.guarded(ctx, "revoke_agent_token", run))
+
+
+@router.post("/executor-grants")
+def create_executor_grant(body: ExecutorGrantIn, request: Request,
+                          p: Principal = Depends(require("grant", ui_only=True)), db: Session = Depends(get_db)):
+    """签发确认执行器令牌（只含 confirm/otp，只能调用 /api/exec）。须交给执行器程序保管，不得交给 LLM。"""
+    ctx = make_ctx(request, db, p)
+
+    def run():
+        scopes = sorted(set(body.scopes))
+        bad = set(scopes) - auth.EXECUTOR_ALLOWED_SCOPES
+        if bad or not scopes:
+            raise LantaiError("SCOPE_INSUFFICIENT", f"执行器令牌只能包含 confirm/otp，拒绝: {sorted(bad)}")
+        ttl = min(body.ttl_seconds or config.EXECUTOR_TOKEN_TTL_SECONDS, config.EXECUTOR_TOKEN_MAX_TTL_SECONDS)
+        token, row = auth.issue_token(db, "executor_token", p.user.id, scopes, ttl, issued_by=p.token.id)
+        audit.log(ctx, "grant_executor_token", detail={"grant_id": row.id, "scopes": scopes})
+        return {"grant_id": row.id, "executor_token": token, "scopes": scopes, "expires_at": clock.iso(row.expires_at)}
+
+    return ok(request, audit.guarded(ctx, "grant_executor_token", run))
+
+
+@router.get("/executor-grants")
+def list_executor_grants(request: Request, p: Principal = READ, db: Session = Depends(get_db)):
+    rows = db.scalars(select(AuthToken).where(AuthToken.user_id == p.user.id, AuthToken.kind == "executor_token")
+                      .order_by(AuthToken.created_at.desc()).limit(50))
+    return ok(request, [{"grant_id": r.id, "scopes": r.scopes.split(","), "expires_at": clock.iso(r.expires_at),
+                         "revoked": r.revoked_at is not None} for r in rows])
+
+
+@router.delete("/executor-grants/{grant_id}")
+def revoke_executor_grant(grant_id: str, request: Request, p: Principal = Depends(require("grant", ui_only=True)),
+                          db: Session = Depends(get_db)):
+    ctx = make_ctx(request, db, p)
+
+    def run():
+        row = db.get(AuthToken, grant_id)
+        if row is None or row.user_id != p.user.id or row.kind != "executor_token":
+            raise LantaiError("RESOURCE_NOT_OWNED", "授权不存在")
+        row.revoked_at = row.revoked_at or clock.now()
+        audit.log(ctx, "revoke_executor_token", detail={"grant_id": grant_id})
+        return {"grant_id": grant_id, "revoked": True}
+
+    return ok(request, audit.guarded(ctx, "revoke_executor_token", run))
 
 
 @router.get("/operations")

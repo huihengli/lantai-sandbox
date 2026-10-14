@@ -47,6 +47,11 @@ class GrantIn(BaseModel):
     ttl_seconds: int | None = Field(None, gt=0)
 
 
+class ExecutorGrantIn(BaseModel):
+    scopes: list[str] = Field(max_length=2, default=["confirm", "otp"])
+    ttl_seconds: int | None = Field(None, gt=0)
+
+
 class OtpIn(BaseModel):
     code: str = Field(max_length=10)
 

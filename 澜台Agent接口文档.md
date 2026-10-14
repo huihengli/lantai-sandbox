@@ -17,6 +17,7 @@
 - 9. Agent 行为守则
 - 10. 演示数据速查
 - 11. 不属于 Agent 的接口
+- 12. 确认执行器通道 `/api/exec`
 
 ## 0. 相对上一版（2026-10-12）的变更
 
@@ -42,17 +43,17 @@
 | 约束 | 说明 |
 |---|---|
 | 后端不信任 Agent | 限额、黑名单、余额、归属、适当性全部由后端校验；Agent 的意图摘要只写入审计，不参与判定 |
-| Agent 没有确认权 | 所有会动钱或放宽权限的操作只能 `prepare`，确认与 OTP 只能由用户在前端界面完成 |
+| Agent 没有确认权 | 所有会动钱或放宽权限的操作只能 `prepare`；确认与 OTP 由用户在银行确认中心完成，或由用户在 Agent 侧**确认执行器**弹出的确认框中手动完成（执行器使用独立令牌与 `/api/exec` 通道，见第 12 节） |
 | 收紧立即生效，放宽或不可逆需确认 | 冻结/关开关/调低额度/创建预留可由 Agent 直接执行；**挂失（不可撤销）**、解冻/补发/调高额度/开境外/释放预留必须经用户确认 |
 | 最小披露 | 错误、摘要、结果、事件都不返回调用方未请求的数据；**余额、可用额度、限额只能通过 `get_balance` 读取**（受 `read` 控制） |
-| 只调 `/api/v1/*` | `/ui/*` 与 `/admin/*` 不属于 Agent；Agent 令牌调用 `/ui/*` 会收到 `CHANNEL_NOT_ALLOWED` 并记入审计 |
+| 只调 `/api/v1/*` | `/ui/*`、`/admin/*`、`/api/exec/*` 不属于 LLM Agent；Agent 令牌调用 `/ui/*` 会收到 `CHANNEL_NOT_ALLOWED` 并记入审计 |
 
 ## 2. 接入与认证
 
 - **Base URL**：开发环境默认 `http://localhost:8001`（以部署为准）。
 - **认证**：`Authorization: Bearer <agent_token>`。令牌由**用户**在前端“助手授权”页签发，明文只显示一次。
 - **有效期**：默认 30 分钟，最长 60 分钟；用户可随时撤销（撤销后返回 `AUTH_REVOKED`）。到期需让用户重新授权。
-- **scopes**（Agent 令牌只可能包含以下三种，永远没有 `confirm` / `otp`）：
+- **scopes**（Agent 令牌只可能包含以下三种，永远没有 `confirm` / `otp`；确认能力属于独立的执行器令牌，见第 12 节）：
 
 | scope | 含义 |
 |---|---|
@@ -915,8 +916,60 @@ Agent                         澜台后端                         用户（前�
 
 | 前缀 | 用途 | 说明 |
 |---|---|---|
-| `/ui/*` | 登录（含防暴破限频）、退出（可同时撤销全部 Agent 令牌）、签发/撤销 Agent 令牌、查看待确认操作、OTP 提示与验证、**确认/拒绝**、提交风险测评、审计 | 仅 `user_session`；确认权的唯一入口；生产模式下 `otp-hint` 关闭 |
+| `/ui/*` | 登录（含防暴破限频）、退出（可同时撤销全部 Agent / 执行器令牌）、签发/撤销 Agent 令牌与执行器令牌、查看待确认操作、OTP 提示与验证、**确认/拒绝**、提交风险测评、审计 | 仅 `user_session`；生产模式下 `otp-hint` 关闭 |
+| `/api/exec/*` | 确认执行器：拉取操作详情、提交验证码、确认/拒绝 | 仅 `executor_token`（`lt_x_*`），见第 12 节；不应做成 LLM 可调用的 MCP 工具 |
 | `/admin/*` | 重置数据、模拟时钟、黑名单、模拟商户扣款、调整净值、锁定卡片 | 需 `X-Admin-Key`，仅演示；生产模式默认关闭（`NOT_FOUND`），启用时要求强随机密钥 |
+
+## 12. 确认执行器通道 `/api/exec`
+
+用于 Agent 侧的**确认执行器**：一个独立于 LLM 的确定性程序。Agent 完成 `prepare` 后把 `operation_id` 交给执行器，执行器拉取操作详情、**弹出确认框由用户手动确认**（需要时让用户输入短信验证码），再调用本通道。
+
+### 12.1 凭据与隔离
+
+| 项 | 规则 |
+|---|---|
+| 令牌 | `executor_token`，明文前缀 `lt_x_`，授权编号前缀 `exe_`；由用户在 `/ui` 签发，明文只返回一次 |
+| scope | 只能是 `confirm`、`otp` 的子集（默认两者都有）；不能包含 `read/prepare/protect/grant` |
+| 通道 | **只能**调用 `/api/exec/*`；调用 `/api/v1/*` 或 `/ui/*` 返回 `CHANNEL_NOT_ALLOWED`。Agent 令牌与用户会话调用 `/api/exec/*` 同样返回 `CHANNEL_NOT_ALLOWED` |
+| 有效期 | 默认 30 分钟，最长 60 分钟；可在 `/ui` 单独撤销；`POST /ui/logout?revoke_grants=true` 会一并撤销 |
+| 保管 | **只能由执行器程序持有，不得出现在 LLM 的上下文、工具参数或日志里**。LLM 侧的 Agent 令牌仍然没有 `confirm/otp`，因此即使被提示注入也无法跳过确认框 |
+| 审计 | `actor = executor`，`channel = exec`，与用户在确认中心的操作可区分 |
+
+### 12.2 签发与管理（用户通道，需用户会话）
+
+| 接口 | scope | 说明 |
+|---|---|---|
+| `POST /ui/executor-grants` | `grant` | body：`{"scopes": ["confirm","otp"], "ttl_seconds": 1800}`（均可省略）；返回 `grant_id`、`executor_token`、`scopes`、`expires_at` |
+| `GET /ui/executor-grants` | `read` | 列出执行器授权（不含令牌明文） |
+| `DELETE /ui/executor-grants/{grant_id}` | `grant` | 撤销；只能撤销执行器授权，传 Agent 授权编号返回 `RESOURCE_NOT_OWNED` |
+
+### 12.3 执行器接口
+
+| 接口 | scope | 说明 |
+|---|---|---|
+| `GET /api/exec/operations/{op_id}` | `confirm` | 渲染确认框用。内容与用户确认中心一致：`summary`（含 `balance_after`）、完整风控文案、`status`（`OTP_PENDING` 表示需要验证码）、`expires_at` |
+| `POST /api/exec/operations/{op_id}/verify-otp` | `otp` | body：`{"code": "123456"}`，提交用户在确认框输入的验证码；错误返回 `OTP_INVALID`（`details.attempts_left`），3 次后 `OTP_LOCKED`；每用户 10 分钟错 10 次后 `RATE_LIMITED` |
+| `POST /api/exec/operations/{op_id}/confirm` | `confirm` | 用户点击“确认”后调用。与 `/ui` 确认相同：重新风控、重新校验余额与状态，同一操作只执行一次；需要 OTP 而未验证时返回 `OTP_REQUIRED` |
+| `POST /api/exec/operations/{op_id}/reject` | `confirm` | 用户点击“拒绝”后调用，操作置为 `CANCELLED` |
+
+非本人操作统一返回 `OPERATION_NOT_FOUND`（404）。确认结果与 `/ui` 相同，Agent 仍可用 `get_operation` 或事件流查询结果（Agent 视图按最小披露裁剪）。
+
+### 12.4 推荐流程
+
+```
+LLM Agent                 确认执行器（独立程序）              用户                澜台
+ │ prepare_xxx ──────────────────────────────────────────────────────────────▶ │
+ │ ◀─────────────────────────────────────────────────── operation_id ────────── │
+ │ 交出 operation_id ──▶ │ GET /api/exec/operations/{id} ──────────────────────▶ │
+ │                       │ 弹出确认框（摘要 + 风控原因）──▶ │                     │
+ │                       │ ◀──── 确认 / 拒绝（+ 验证码）─── │                     │
+ │                       │ [verify-otp] → confirm 或 reject ───────────────────▶ │
+ │ ◀── 只回传最终状态 ── │                                                       │
+```
+
+- 执行器**必须**在用户实际点击后才调用 `confirm`，不得根据 Agent 的输出自动确认；确认框应展示 `summary` 与全部 `risk.reasons.message`。
+- 执行器回传给 LLM 的内容建议只保留 `status` 与流水号等必要字段，不要回传 `balance_after` 等余额信息。
+- 用户在银行确认中心（`/ui`）的确认流程保持可用，两条路径互不影响，状态以后端为准。
 
 ---
 

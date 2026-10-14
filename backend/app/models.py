@@ -157,7 +157,7 @@ class AuthToken(Base):
     __tablename__ = "auth_tokens"
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)
-    kind: Mapped[str] = mapped_column(String(20))  # user_session / agent_token
+    kind: Mapped[str] = mapped_column(String(20))  # user_session / agent_token / executor_token
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     scopes: Mapped[str] = mapped_column(String(200))
     issued_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
