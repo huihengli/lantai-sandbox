@@ -10,6 +10,7 @@ from app import clock, config
 from app.errors import LantaiError
 from app.models import PendingOperation, User
 from app.money import new_id
+from app.risk import engine
 from app.security import otp, ratelimit
 from app.services import audit, cards, events, deposit, holds, idempotency, mandates, payments, transfer, wealth
 
@@ -128,8 +129,10 @@ def prepare(ctx: audit.Ctx, user: User, op_type: str, body, idem_key: str | None
     if op_type == "transfer":
         ratelimit.check(f"probe:{user.id}", config.PREPARE_PROBE_LIMIT, config.PREPARE_PROBE_WINDOW)
     params = NORMALIZE[op_type](db, user, body)
+    if getattr(body, "step_up", None):
+        params["step_up"] = body.step_up  # 随操作持久化，确认时复核仍按更严的要求
     plan = BUILD[op_type](db, user, params, now)
-    risk = plan.risk
+    risk = engine.apply_step_up(plan.risk, params.get("step_up"))
     status = {"block": "BLOCKED", "otp": "OTP_PENDING"}.get(risk["required_action"], "PREPARED")
     op = PendingOperation(
         id=new_id("op"), user_id=user.id, type=op_type,
@@ -144,7 +147,7 @@ def prepare(ctx: audit.Ctx, user: User, op_type: str, body, idem_key: str | None
         otp.issue(db, op)
     emit_status(db, op)
     audit.log(ctx, f"prepare:{op_type}", "blocked" if status == "BLOCKED" else "ok", op.id, risk,
-              detail={"summary": plan.summary})
+              detail={"summary": plan.summary, "step_up": params.get("step_up")})
     out = view(op, ctx.actor)
     if not idempotency.store(db, idem_key, user.id, endpoint, req_hash, out):
         return idempotency.lookup(db, idem_key, user.id, endpoint, req_hash) or out
@@ -189,7 +192,7 @@ def confirm(ctx: audit.Ctx, user: User, op_id: str) -> dict:
     except LantaiError as exc:
         _fail(db, op_id, exc)
         raise
-    risk = plan.risk
+    risk = engine.apply_step_up(plan.risk, params.get("step_up"))
     op.risk_json, op.risk_level, op.required_action = json.dumps(risk, ensure_ascii=False), risk["level"], risk["required_action"]
     if risk["required_action"] == "block":
         op.status = "BLOCKED"

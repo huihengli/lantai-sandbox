@@ -8,7 +8,7 @@ from app import clock, config
 from app.models import Account, AutopayPlan, Transaction
 from app.services.account import held_amount
 from app.risk import rules
-from app.risk.codes import SEVERITY_ORDER
+from app.risk.codes import SEVERITY_ORDER, reason
 from app.risk.context import RiskContext
 
 _ACTION = {"low": "confirm", "medium": "otp", "high": "otp", "blocked": "block"}
@@ -34,6 +34,16 @@ def build_context(db: Session, user_id: str, account: Account, op_type: str, amo
         local_now=clock.local(now), held_cents=held_amount(db, account.id), today_out_cents=int(today_out), recent_out_count=int(recent),
         autopays=[(a.merchant, a.amount_cents, a.next_debit_date.isoformat()) for a in autopays],
         **extra)
+
+
+def apply_step_up(risk: dict, step_up: str | None) -> dict:
+    """合并 Agent 的加强验证要求：追加 AGENT_STEP_UP 后重新取最高级别。
+    只会让要求变严（confirm → otp），已是 otp / block 的保持不变。"""
+    if step_up != "otp":
+        return risk
+    reasons = [*risk["reasons"], reason("AGENT_STEP_UP")]
+    level = max((r["severity"] for r in reasons), key=SEVERITY_ORDER.__getitem__)
+    return {**risk, "level": level, "required_action": _ACTION[level], "reasons": reasons}
 
 
 def evaluate(ctx: RiskContext) -> dict:

@@ -8,7 +8,7 @@
 - 1. 定位与硬性约束
 - 2. 接入与认证
 - 3. 统一响应与错误码
-- 4. 核心流程：prepare → 用户确认 → 查询结果
+- 4. 核心流程：prepare → 用户确认 → 查询结果（含 4.4 Agent 加强验证 `step_up`）
 - 5. 风控结果与原因码
 - 6. 事件流
 - 7. 接口参考
@@ -205,6 +205,32 @@ Agent                         澜台后端                         用户（前�
 | `wealth_subscribe` | `prepare_wealth_subscribe` |
 | `wealth_redeem` | `prepare_wealth_redeem` |
 
+### 4.4 Agent 加强验证 `step_up`
+
+所有 `prepare_*` 接口（以及 `precheck_transfer_risk`）都接受可选参数 `step_up`，目前唯一取值为 `"otp"`。Agent 自身判定为**红色（高风险）**时传入，要求本次操作必须经过短信验证码。
+
+| 规则 | 说明 |
+|---|---|
+| 取严合并 | 后端取“自身风控判定”与 `step_up` 中**更严**的一个：自身判定为 `confirm` 时升级为 `otp`；已是 `otp` 或 `block` 时保持不变。**只能变严，不能放宽**，不存在降低要求的取值 |
+| 原因码 | 传入后 `risk.reasons` 追加一条 `AGENT_STEP_UP`（medium），`risk.level` 按全部原因重新取最高级别 |
+| 持久化 | `step_up` 随操作保存，用户确认时重新风控仍按更严的要求执行（未验证 OTP 时确认返回 `OTP_REQUIRED`） |
+| 审计 | prepare / 预检的审计记录中，`risk.reasons` 含 `AGENT_STEP_UP`，`detail.step_up = "otp"` |
+| 幂等 | `step_up` 属于请求内容：同一 `Idempotency-Key` 先后以不同 `step_up` 提交，返回 `IDEMPOTENCY_CONFLICT`，不能借幂等键给已创建的操作加严或放宽 |
+| 校验 | 取值不是 `"otp"`（如 `"confirm"`、`"none"`、空串）返回 422 `VALIDATION_ERROR`；不传则与原行为完全一致 |
+
+**Agent 侧必须做的兜底检查**：传入 `step_up: "otp"` 后，检查返回的 `risk.required_action`（或 `status`）。若要求低于自身判定（例如仍为 `confirm` / `status = PREPARED`，说明对端尚未支持该参数），**立即调用 `cancel_operation` 取消该操作并向用户报错，不得降级继续执行**。
+
+```json
+// 请求
+{ "from_account_id": "acc_001", "payee_id": "pye_001", "amount": "500.00", "step_up": "otp" }
+// 返回（节选）
+{ "status": "OTP_PENDING",
+  "risk": { "level": "medium", "required_action": "otp",
+            "reasons": [ { "code": "AGENT_STEP_UP", "severity": "medium",
+                           "message": "智能助手判定本次操作风险较高，要求加强验证（短信验证码）",
+                           "agent_hint": "已按你的要求升级为短信验证；不要替用户输入或索要验证码", "params": {} } ] } }
+```
+
 ## 5. 风控结果与原因码
 
 `risk.level`：`low` < `medium` < `high` < `blocked`；`risk.required_action`：`confirm`（仅确认）/ `otp`（先验证码）/ `block`（拦截）。
@@ -231,6 +257,7 @@ Agent                         澜台后端                         用户（前�
 | `CARD_UNFREEZE` | medium | 解冻/解锁卡片后，卡片渠道的交易将恢复 | 确认是用户本人要求解冻，且已排除盗刷风险 |
 | `CONTROL_LOOSEN` | medium | 将打开以下交易开关：{items} | 确认用户确有使用需求 |
 | `NEW_MERCHANT` | medium | 首次向该商户支付 | 提醒用户核实商户与订单 |
+| `AGENT_STEP_UP` | medium | 智能助手判定本次操作风险较高，要求加强验证（短信验证码） | 已按你的要求升级为短信验证；不要替用户输入或索要验证码（仅在传入 `step_up: "otp"` 时出现，见 4.4） |
 | `NEW_PAYEE` | medium | 首次向该收款人转账 | 向用户说明并提醒核实对方身份 |
 | `OVERSEAS_PAYMENT` | medium | 该商户位于境外 | 确认用户知晓境外交易的汇率与风险 |
 | `RAPID_REPEAT` | medium | {window} 分钟内已发生多笔转出 | 询问是否被人催促连续转账 |
@@ -387,7 +414,7 @@ Agent                         澜台后端                         用户（前�
 | `currency` | string（≤8） | 否 | `CNY` | 仅支持 CNY |
 | `memo` | string（≤200） | 否 |  | 附言，≤200 字 |
 
-> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
+> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）、`agent_context: {intent_summary, user_utterance_excerpt}`（只写入审计，不参与判定），以及 `step_up: "otp"`（Agent 判定为高风险时要求加强验证，只能变严，见 4.4）。
 
 #### `GET /api/v1/operations/{op_id}`
 
@@ -407,7 +434,7 @@ Agent                         澜台后端                         用户（前�
 
 - **MCP 工具名**：`precheck_transfer_risk`　**类别**：查询　**所需 scope**：`read`
 - **说明**：只评估转账风险，不创建操作、不扣款。
-- **注意**：用户还在犹豫或信息不全时先探路，例如提前发现黑名单收款方。请求体与 `prepare_transfer` 相同，同样强制核验行内户名（不符返回 `PAYEE_NOT_FOUND`）；与 prepare 共用每用户 10 分钟 60 次的探测额度。
+- **注意**：用户还在犹豫或信息不全时先探路，例如提前发现黑名单收款方。请求体与 `prepare_transfer` 相同（含 `step_up`，按 4.4 取严合并），同样强制核验行内户名（不符返回 `PAYEE_NOT_FOUND`）；与 prepare 共用每用户 10 分钟 60 次的探测额度。
 
 | 请求体字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
@@ -447,7 +474,7 @@ Agent                         澜台后端                         用户（前�
 | `product_id` | string（≤40） | 是 |  | 产品 id |
 | `amount` | string（≤24） | 是 |  | 金额，字符串，最多两位小数，大于 0 |
 
-> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
+> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）、`agent_context: {intent_summary, user_utterance_excerpt}`（只写入审计，不参与判定），以及 `step_up: "otp"`（Agent 判定为高风险时要求加强验证，只能变严，见 4.4）。
 
 #### `POST /api/v1/deposits/{holding_id}/early-withdraw/prepare`
 
@@ -460,7 +487,7 @@ Agent                         澜台后端                         用户（前�
 |---|---|---|---|---|
 | `holding_id` | string（≤40） | 否 |  | 定期/理财持仓 id |
 
-> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
+> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）、`agent_context: {intent_summary, user_utterance_excerpt}`（只写入审计，不参与判定），以及 `step_up: "otp"`（Agent 判定为高风险时要求加强验证，只能变严，见 4.4）。
 
 ### 7.5 卡片与额度
 
@@ -548,7 +575,7 @@ Agent                         澜台后端                         用户（前�
 |---|---|---|---|---|
 | `account_id` | string（≤40） | 是 |  | 账户 id |
 
-> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
+> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）、`agent_context: {intent_summary, user_utterance_excerpt}`（只写入审计，不参与判定），以及 `step_up: "otp"`（Agent 判定为高风险时要求加强验证，只能变严，见 4.4）。
 
 #### `POST /api/v1/cards/{card_id}/unfreeze/prepare`
 
@@ -561,7 +588,7 @@ Agent                         澜台后端                         用户（前�
 |---|---|---|---|---|
 | `card_id` | string（≤40） | 否 |  | 卡片 id |
 
-> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
+> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）、`agent_context: {intent_summary, user_utterance_excerpt}`（只写入审计，不参与判定），以及 `step_up: "otp"`（Agent 判定为高风险时要求加强验证，只能变严，见 4.4）。
 
 #### `POST /api/v1/cards/{card_id}/reissue/prepare`
 
@@ -574,7 +601,7 @@ Agent                         澜台后端                         用户（前�
 |---|---|---|---|---|
 | `card_id` | string（≤40） | 否 |  | 卡片 id |
 
-> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
+> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）、`agent_context: {intent_summary, user_utterance_excerpt}`（只写入审计，不参与判定），以及 `step_up: "otp"`（Agent 判定为高风险时要求加强验证，只能变严，见 4.4）。
 
 #### `POST /api/v1/cards/{card_id}/controls/prepare`
 
@@ -589,7 +616,7 @@ Agent                         澜台后端                         用户（前�
 | `overseas` | boolean | 否 |  | 境外交易开关：true 开启 / false 关闭 |
 | `atm` | boolean | 否 |  | ATM 取现开关：true 开启 / false 关闭 |
 
-> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
+> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）、`agent_context: {intent_summary, user_utterance_excerpt}`（只写入审计，不参与判定），以及 `step_up: "otp"`（Agent 判定为高风险时要求加强验证，只能变严，见 4.4）。
 
 #### `POST /api/v1/cards/{card_id}/limits/prepare`
 
@@ -604,7 +631,7 @@ Agent                         澜台后端                         用户（前�
 | `single_limit` | string（≤24） | 否 |  | 单笔额度（元，字符串） |
 | `daily_limit` | string（≤24） | 否 |  | 单日额度（元，字符串） |
 
-> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
+> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）、`agent_context: {intent_summary, user_utterance_excerpt}`（只写入审计，不参与判定），以及 `step_up: "otp"`（Agent 判定为高风险时要求加强验证，只能变严，见 4.4）。
 
 #### `POST /api/v1/accounts/{account_id}/limits/prepare`
 
@@ -619,7 +646,7 @@ Agent                         澜台后端                         用户（前�
 | `single_limit` | string（≤24） | 否 |  | 单笔额度（元，字符串） |
 | `daily_limit` | string（≤24） | 否 |  | 单日额度（元，字符串） |
 
-> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
+> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）、`agent_context: {intent_summary, user_utterance_excerpt}`（只写入审计，不参与判定），以及 `step_up: "otp"`（Agent 判定为高风险时要求加强验证，只能变严，见 4.4）。
 
 ### 7.6 代扣协议
 
@@ -644,7 +671,7 @@ Agent                         澜台后端                         用户（前�
 |---|---|---|---|---|
 | `mandate_id` | string（≤40） | 否 |  |  |
 
-> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
+> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）、`agent_context: {intent_summary, user_utterance_excerpt}`（只写入审计，不参与判定），以及 `step_up: "otp"`（Agent 判定为高风险时要求加强验证，只能变严，见 4.4）。
 
 ### 7.7 资金预留
 
@@ -682,7 +709,7 @@ Agent                         澜台后端                         用户（前�
 |---|---|---|---|---|
 | `hold_id` | string（≤40） | 否 |  |  |
 
-> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
+> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）、`agent_context: {intent_summary, user_utterance_excerpt}`（只写入审计，不参与判定），以及 `step_up: "otp"`（Agent 判定为高风险时要求加强验证，只能变严，见 4.4）。
 
 ### 7.8 商户支付
 
@@ -705,7 +732,7 @@ Agent                         澜台后端                         用户（前�
 | `order_ref` | string（≤60） | 是 |  | 订单号，≤60 字；同一商户内唯一 |
 | `channel` | `online` \| `offline` | 否 | `online` | 支付渠道：online（默认）/ offline |
 
-> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
+> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）、`agent_context: {intent_summary, user_utterance_excerpt}`（只写入审计，不参与判定），以及 `step_up: "otp"`（Agent 判定为高风险时要求加强验证，只能变严，见 4.4）。
 
 ### 7.9 风险测评与理财
 
@@ -744,7 +771,7 @@ Agent                         澜台后端                         用户（前�
 | `product_id` | string（≤40） | 是 |  | 产品 id |
 | `amount` | string（≤24） | 是 |  | 金额，字符串，最多两位小数，大于 0 |
 
-> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
+> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）、`agent_context: {intent_summary, user_utterance_excerpt}`（只写入审计，不参与判定），以及 `step_up: "otp"`（Agent 判定为高风险时要求加强验证，只能变严，见 4.4）。
 
 #### `POST /api/v1/wealth/redeem/prepare`
 
@@ -758,7 +785,7 @@ Agent                         澜台后端                         用户（前�
 | `shares` | string（≤16） | 否 |  | 赎回份额，字符串，最多两位小数；缺省=全部赎回 |
 | `account_id` | string（≤40） | 否 |  | 账户 id |
 
-> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）与 `agent_context: {intent_summary, user_utterance_excerpt}`；后者只写入审计，不参与判定。
+> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）、`agent_context: {intent_summary, user_utterance_excerpt}`（只写入审计，不参与判定），以及 `step_up: "otp"`（Agent 判定为高风险时要求加强验证，只能变严，见 4.4）。
 
 ### 7.10 事件流
 
@@ -846,6 +873,7 @@ Agent                         澜台后端                         用户（前�
       "amount": { "type": "string", "maxLength": 24, "pattern": "^\\d{1,12}(\\.\\d{1,2})?$", "description": "金额，字符串，最多两位小数" },
       "memo": { "type": "string", "maxLength": 200 },
       "idempotency_key": { "type": "string", "description": "同一次用户意图复用同一个键" },
+      "step_up": { "type": "string", "enum": ["otp"], "description": "你判定为红色（高风险）时传 otp，要求短信验证；只能变严。返回的 required_action 若低于 otp，必须取消操作并报错" },
       "agent_context": { "type": "object", "properties": { "intent_summary": { "type": "string" }, "user_utterance_excerpt": { "type": "string" } } }
     }
   }
@@ -902,6 +930,7 @@ Agent                         澜台后端                         用户（前�
 6. **信息不全不要猜**：重名收款人、缺少户名、金额含糊时先追问；可先用 `precheck_transfer_risk` 探路。收到 `PAYEE_NOT_FOUND` 时请用户核对账号与完整户名，**不要自行尝试其他写法的名字**。
 7. **隐私**：只向用户展示脱敏账号；`resolve_payee_by_phone` 的结果不要外泄给第三方。
 8. **尊重用户的确认结果**：`request_user_confirmation` 返回 `CANCELLED` 或 `user_dismissed` 时视为用户拒绝，不得立即重新 prepare 同一操作、反复弹框或劝说用户改变决定；只有用户主动再次提出时才重新发起。返回 `BLOCKED` / `FAILED` 时按守则 3 处理，不要换方式重试。
+9. **红色操作要求加强验证且不降级**：自身判定为红色时，prepare 必须带 `step_up: "otp"`；若返回的 `required_action` 低于 `otp`（或 `status` 不是 `OTP_PENDING` / `BLOCKED`），立即 `cancel_operation` 并向用户报错，不得继续引导确认。
 
 ## 10. 演示数据速查
 

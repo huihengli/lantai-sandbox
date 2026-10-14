@@ -14,6 +14,7 @@ from app.money import fmt, like_escape, mask, parse_amount
 from app.schemas import (AccountLimitsIn, WealthRedeemIn, WealthSubscribeIn, CardApplyIn, CardControlsIn, CardLimitsIn, CardOnlyIn, DepositIn,
                          EarlyWithdrawIn, HoldIn, HoldReleaseIn, MandateCancelIn, MerchantPayIn, PayeeIn, PayeePatch,
                          TransferIn)
+from app.risk import engine
 from app.security import ratelimit
 from app.security.auth import Principal, make_ctx, require
 from app.services import account as acct
@@ -208,8 +209,9 @@ def precheck(body: TransferIn, request: Request, p: Principal = READ, db: Sessio
         ratelimit.check(f"probe:{p.user.id}", config.PREPARE_PROBE_LIMIT, config.PREPARE_PROBE_WINDOW)
         params = transfer.normalize(db, p.user, body)
         plan = transfer.build_plan(db, p.user, params, clock.now())
-        audit.log(ctx, "risk_precheck", risk=plan.risk, detail={"summary": plan.summary})
-        return {"summary": plan.summary, "risk": plan.risk}
+        risk = engine.apply_step_up(plan.risk, body.step_up)
+        audit.log(ctx, "risk_precheck", risk=risk, detail={"summary": plan.summary, "step_up": body.step_up})
+        return {"summary": plan.summary, "risk": risk}
 
     return ok(request, audit.guarded(ctx, "risk_precheck", run))
 

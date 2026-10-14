@@ -12,6 +12,8 @@ class AgentContext(BaseModel):
 class PrepareBase(BaseModel):
     idempotency_key: str | None = Field(None, max_length=100)
     agent_context: AgentContext | None = None
+    # Agent 判定高风险时要求加强验证；后端取“自身判定”与此参数中更严的一个，只能变严不能放宽
+    step_up: Literal["otp"] | None = None
 
 
 class TransferIn(PrepareBase):
