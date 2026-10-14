@@ -5,7 +5,6 @@
 
 ## 目录
 
-- 0. 相对上一版（2026-10-12）的变更
 - 1. 定位与硬性约束
 - 2. 接入与认证
 - 3. 统一响应与错误码
@@ -18,24 +17,6 @@
 - 10. 演示数据速查
 - 11. 不属于 Agent 的接口
 - 12. 确认执行器通道 `/api/exec`
-
-## 0. 相对上一版（2026-10-12）的变更
-
-以下变更来自安全加固（并发修复、最小披露、限频、输入校验）。**接口路径、请求结构、scope 均未变**，但响应内容与错误行为有变化，MCP 实现需要对应调整。
-
-| 类别 | 变化 | 对 Agent / MCP 的影响 |
-|---|---|---|
-| 最小披露 | `INSUFFICIENT_BALANCE` 不再带 `balance/available`，文案不再区分“可用余额不足/余额不足” | 需要余额时调用 `get_balance`；不要从错误里解析数字 |
-| 最小披露 | Agent 视图的 `summary`、`result` 不含 `balance_after`；事件流不含余额；`create_hold` 不再返回 `available_after` | 对账改用 `get_balance` 与事件里的金额/流水号 |
-| 最小披露 | `DAILY_LIMIT_EXCEEDED`、`CARD_LIMIT_EXCEEDED`、`AUTOPAY_AT_RISK` 对 Agent 只给中性文案，`params` 为空 | 不要依赖这三个原因里的具体金额；需要时查询余额/代扣协议 |
-| 户名强制核验 | 行内转账（prepare / precheck / 确认时）户名必须与收款账户户名完全一致，否则拒绝 | 户名不符与账户不存在返回同一个 `PAYEE_NOT_FOUND`；请让用户核对完整户名，不要猜测或反复试名字 |
-| 防探测 | 添加收款人：账户不存在、户名不符、命中黑名单统一返回 `PAYEE_NOT_FOUND` | 不要据此判断具体原因；`PAYEE_NAME_MISMATCH` 不再返回 |
-| 限频与上限 | 新增：每令牌每分钟 300 次、转账预处理/预检每用户 10 分钟 60 次、添加收款人 10 分钟 20 次、同时待处理操作 20 笔、请求体 64 KB | 处理 `RATE_LIMITED`（读 `details.retry_after_seconds`）、`TOO_MANY_PENDING`、HTTP 413 `PAYLOAD_TOO_LARGE` |
-| 输入校验 | 所有字符串字段增加最大长度（见各接口参数表）；`Idempotency-Key` ≤100 字符；LIKE 类过滤（`keyword`/`counterparty`/`q`）中的 `%` `_` 按字面匹配 | 超长返回 `VALIDATION_ERROR` |
-| 风控口径 | 单日转出额度统计纳入卡片/商户支付；黑名单匹配不再限定银行 | `DAILY_LIMIT_EXCEEDED` 可能比以前更早出现 |
-| 并发 | 同一操作并发确认只会执行一次；定期到期与理财赎回并发不再重复入账 | 重复确认返回首次结果，无需额外处理 |
-| 事件 | 事件保留 30 天，过期惰性清理 | 长时间离线后恢复需自行对账 |
-| 环境 | 生产模式（`APP_ENV=prod`）下 `/admin/*`、`/docs`、`/openapi.json`、`/ui/.../otp-hint` 默认关闭，返回 `NOT_FOUND` | 以本文为准，不要依赖在线 OpenAPI |
 
 ## 1. 定位与硬性约束
 
