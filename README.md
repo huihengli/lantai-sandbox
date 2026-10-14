@@ -1,7 +1,5 @@
 # 澜台（Lantai）模拟银行后端
 
-设计依据：[架构建议.md](架构建议.md)、[澜台后端方案.md](澜台后端方案.md)。
-
 ```
 backend/   FastAPI 服务（app/ 源码，tests/ 测试）
 frontend/  Vue 3 + Vite 前端（中国风科技感：墨色夜 / 宣纸日双主题）

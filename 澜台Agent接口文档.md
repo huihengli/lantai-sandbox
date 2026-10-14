@@ -1,6 +1,6 @@
 # 澜台 Agent 接口文档（MCP 服务器接入用）
 
-> 更新日期：2026-10-13　版本：与后端 1.0.0 同步（共 44 个 Agent 通道接口），已包含安全加固后的对外行为
+> 更新日期：2026-10-14　版本：与后端 1.0.0 同步（共 44 个 Agent 通道接口），已包含安全加固后的对外行为
 > 本文由脚本从运行中的 FastAPI 应用提取接口与请求结构，并补充手写说明生成。开发环境可对照 `GET /openapi.json`；生产模式该接口默认关闭，以本文为准。本文用于指导 MCP 工具的设计。
 
 ## 目录
@@ -82,8 +82,10 @@
 ```json
 // 成功
 { "ok": true,  "request_id": "req_71c2", "data": { ... } }
-// 失败（HTTP 状态码见下表）
-{ "ok": false, "request_id": "req_71c2", "error": { "code": "INSUFFICIENT_BALANCE", "message": "可用余额不足", "details": { "available": "40800.00" } } }
+// 失败（HTTP 状态码见下表）。余额不足：details 为空，不返回任何余额数字
+{ "ok": false, "request_id": "req_71c2", "error": { "code": "INSUFFICIENT_BALANCE", "message": "余额不足", "details": {} } }
+// 失败时 details 只可能携带调用方需要的少量信息，例如限频
+{ "ok": false, "request_id": "req_a08c", "error": { "code": "RATE_LIMITED", "message": "操作过于频繁，请稍后再试", "details": { "retry_after_seconds": 600 } } }
 ```
 
 **业务风控拦截不用 4xx**：`prepare` 被风控拦截时仍返回 HTTP 200，`data.status = "BLOCKED"`，且没有 `confirm_url`；原因在 `data.risk.reasons`。Agent 不需要区分“HTTP 错误”与“业务拦截”，统一读 `status` 与 `reasons`。
@@ -125,7 +127,7 @@
 | `AMOUNT_BELOW_MIN` | 422 | 低于起存/起购额 |
 | `AMOUNT_INVALID` | 422 | 金额或份额格式不合法（须为字符串，最多两位小数，大于 0） |
 | `CURRENCY_UNSUPPORTED` | 422 | 仅支持 CNY |
-| `INSUFFICIENT_BALANCE` | 422 | 可用余额不足。**不再返回具体余额**，需要时调用 `get_balance` |
+| `INSUFFICIENT_BALANCE` | 422 | 可用余额（余额 − 资金预留）不足。`message` 固定为“余额不足”（创建预留时为“余额不足以预留该金额”），`details` 为空，**不返回任何余额数字**；需要时调用 `get_balance` |
 | `PAYEE_NAME_MISMATCH` | 422 | 保留码：目前添加收款人不再返回它（统一为 `PAYEE_NOT_FOUND`）；转账时户名不符体现为风控原因 `PAYEE_NAME_MISMATCH` |
 | `PRODUCT_NOT_AVAILABLE` | 422 | 产品不存在或已下架 |
 | `SAME_ACCOUNT` | 422 | 转给同一账户 / 本人账户无需添加为收款人 |
