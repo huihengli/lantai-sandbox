@@ -1,7 +1,7 @@
 import os
 from collections.abc import Iterator
 
-from sqlalchemy import create_engine, event, inspect
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -61,4 +61,6 @@ def schema_problems(eng: Engine | None = None) -> list[str]:
 
 def drop_tables(keep_audit: bool = False) -> None:
     tables = [t for t in Base.metadata.sorted_tables if not (keep_audit and t.name == "audit_logs")]
+    with engine.begin() as conn:  # 已移除的资金预留功能遗留表，外键指向 accounts，不先删会阻塞 PostgreSQL 删表
+        conn.execute(text("DROP TABLE IF EXISTS holds"))
     Base.metadata.drop_all(engine, tables=tables)

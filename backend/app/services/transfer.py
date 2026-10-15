@@ -67,7 +67,7 @@ def build_plan(db: Session, user: User, params: dict, now, lock: bool = False) -
     acc = acct.get_owned_account(db, user.id, params["from_account_id"])
     if target is not None and target.id == acc.id:
         raise LantaiError("SAME_ACCOUNT", "不能转给同一账户")
-    avail = acct.available_cents(db, acc)
+    avail = acc.balance_cents
     if avail < amount + fee:
         raise LantaiError("INSUFFICIENT_BALANCE", "余额不足")
 

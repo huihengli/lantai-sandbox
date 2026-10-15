@@ -113,8 +113,6 @@ def test_subscribe_validations(client, lin):
     assert sub(client, lin, amount="99999.00")["error"]["code"] == "INSUFFICIENT_BALANCE"
     assert sub(client, lin, amount="1.234")["error"]["code"] == "AMOUNT_INVALID"
     assert sub(client, lin, acc="acc_101")["error"]["code"] == "RESOURCE_NOT_OWNED"
-    client.post("/api/v1/accounts/acc_001/holds", json={"amount": "50000.00"}, headers=lin.agent)
-    assert sub(client, lin, amount="1000.00")["error"]["code"] == "INSUFFICIENT_BALANCE"  # 预留资金不可申购
 
 
 def test_redeem_with_gain_and_partial(client, lin):

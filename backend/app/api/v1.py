@@ -12,13 +12,13 @@ from app.errors import LantaiError
 from app.models import (Account, DepositHolding, DepositProduct, Payee, Transaction)
 from app.money import fmt, like_escape, mask, parse_amount
 from app.schemas import (AccountLimitsIn, WealthRedeemIn, WealthSubscribeIn, CardApplyIn, CardControlsIn, CardLimitsIn, CardOnlyIn, DepositIn,
-                         EarlyWithdrawIn, HoldIn, HoldReleaseIn, MandateCancelIn, MerchantPayIn, PayeeIn, PayeePatch,
+                         EarlyWithdrawIn, MandateCancelIn, MerchantPayIn, PayeeIn, PayeePatch,
                          TransferIn)
 from app.risk import engine
 from app.security import ratelimit
 from app.security.auth import Principal, make_ctx, require
 from app.services import account as acct
-from app.services import audit, cards as card_svc, events as event_svc, deposit, holds as hold_svc, mandates as mandate_svc, operation, payments, risk_profile, transfer, wealth
+from app.services import audit, cards as card_svc, events as event_svc, deposit, mandates as mandate_svc, operation, payments, risk_profile, transfer, wealth
 from app.services import payees as payee_svc
 
 router = APIRouter(prefix="/api/v1", tags=["agent"])
@@ -63,8 +63,7 @@ def balance(account_id: str, request: Request, p: Principal = READ, db: Session 
     used = db.scalar(select(func.coalesce(func.sum(Transaction.amount_cents), 0)).where(
         Transaction.account_id == a.id, Transaction.direction == "out", Transaction.category == "transfer",
         Transaction.occurred_at >= clock.local_day_start_utc(clock.now())))
-    held = acct.held_amount(db, a.id)
-    return ok(request, {**_account_view(a), "held": fmt(held), "available": fmt(a.balance_cents - held),
+    return ok(request, {**_account_view(a), "available": fmt(a.balance_cents),
                         "single_limit": fmt(a.single_limit_cents), "daily_limit": fmt(a.daily_limit_cents),
                         "today_transferred_out": fmt(int(used)),
                         "daily_remaining": fmt(max(a.daily_limit_cents - int(used), 0))})
@@ -344,31 +343,6 @@ def mandates_cancel_prepare(mandate_id: str, request: Request, body: MandateCanc
     return _prepare(request, db, p, "mandate_cancel", body)
 
 
-# ---------------- 资金预留 ----------------
-@router.get("/accounts/{account_id}/holds")
-def holds_list(account_id: str, request: Request, status: str | None = Query(None, pattern="^(active|released|expired)$"),
-               p: Principal = READ, db: Session = Depends(get_db)):
-    a = _owned(db, p, account_id)
-    out = [hold_svc.view(h) for h in hold_svc.list_holds(db, a.id, status)]
-    db.commit()  # list_holds 会把到期预留惰性转为 expired
-    return ok(request, out)
-
-
-@router.post("/accounts/{account_id}/holds")
-def holds_create(account_id: str, body: HoldIn, request: Request, p: Principal = PROTECT,
-                 db: Session = Depends(get_db)):
-    """预留（锁定）一笔资金：收紧类操作，直接生效。释放需 holds/{id}/release/prepare 并由用户确认。"""
-    return _direct(request, db, p, "hold_create", lambda ctx: hold_svc.create(ctx, p.user, account_id, body))
-
-
-@router.post("/holds/{hold_id}/release/prepare")
-def holds_release_prepare(hold_id: str, request: Request, body: HoldReleaseIn | None = None,
-                          p: Principal = PREPARE, db: Session = Depends(get_db)):
-    body = body or HoldReleaseIn()
-    body.hold_id = hold_id
-    return _prepare(request, db, p, "hold_release", body)
-
-
 # ---------------- 商户支付 ----------------
 @router.get("/merchants")
 def merchants_list(request: Request, p: Principal = READ, db: Session = Depends(get_db)):
@@ -385,7 +359,7 @@ def merchant_pay_prepare(body: MerchantPayIn, request: Request, p: Principal = P
 # ---------------- 事件流 ----------------
 @router.get("/events")
 def events_feed(request: Request, after_id: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=200),
-                types: str | None = Query(None, description="逗号分隔：txn_in,txn_out,operation,card,account,mandate,hold"),
+                types: str | None = Query(None, description="逗号分隔：txn_in,txn_out,operation,card,account,mandate"),
                 p: Principal = READ, db: Session = Depends(get_db)):
     """递增事件流（只读）。Agent 记住 next_after_id，轮询即可做提醒、对账与定时触发。"""
     return ok(request, event_svc.fetch(db, p.user.id, after_id, limit, types.split(",") if types else None))

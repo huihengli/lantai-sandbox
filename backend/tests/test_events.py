@@ -70,18 +70,14 @@ def test_otp_locked_event(client, lin):
     assert (op, "OTP_LOCKED") in [(e["data"]["operation_id"], e["data"]["status"]) for e in feed(client, lin, types="operation")["items"]]
 
 
-def test_card_mandate_hold_events(client, lin):
+def test_card_mandate_events(client, lin):
     client.post("/api/v1/cards/crd_001/freeze", headers=lin.agent)
     client.put("/api/v1/accounts/acc_001/limits", json={"single_limit": "1000.00"}, headers=lin.agent)
-    h = client.post("/api/v1/accounts/acc_001/holds", json={"amount": "100.00", "purpose": "测试"}, headers=lin.agent).json()["data"]["hold"]
     m = client.post("/api/v1/mandates/apy_003/cancel/prepare", headers=lin.agent).json()["data"]["operation_id"]
     lin.confirm(m)
     client.post("/admin/mandates/apy_004/charge", headers=ADMIN)
-    rel = client.post(f"/api/v1/holds/{h['id']}/release/prepare", headers=lin.agent).json()["data"]["operation_id"]
-    lin.confirm(rel)
     types = [(e["type"], e["data"].get("status") or e["data"].get("change")) for e in feed(client, lin, limit=100)["items"]]
     assert ("card", "frozen") in types and ("account", "limits") in types
-    assert ("hold", "active") in types and ("hold", "released") in types
     assert ("mandate", "cancelled") in types and ("txn_out", None) in types
 
 

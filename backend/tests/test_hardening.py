@@ -97,12 +97,6 @@ def test_f03_prepare_only_token_learns_no_balance(client, lin):
     assert "balance_after" in ui["result"]  # 用户通道仍可见
 
 
-def test_f03_balance_message_does_not_reveal_holds(client, lin):
-    client.post("/api/v1/accounts/acc_001/holds", json={"amount": "50000.00"}, headers=lin.agent)
-    msg = lin.transfer("5000.00")["error"]["message"]
-    assert msg == "余额不足"  # 不区分「可用余额不足」，避免暴露资金预留
-
-
 def test_f04_login_lockout_and_no_user_oracle(client):
     for _ in range(config.LOGIN_FAIL_LIMIT_PHONE):
         r = client.post("/ui/login", json={"phone": "13800000001", "password": "wrong"})

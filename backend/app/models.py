@@ -229,21 +229,6 @@ class Card(Base):
     status_changed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
-class Hold(Base):
-    __tablename__ = "holds"
-    __table_args__ = (Index("idx_hold_acc_status", "account_id", "status"),)
-    id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
-    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id"))
-    amount_cents: Mapped[int] = mapped_column(BigInteger)
-    purpose: Mapped[str] = mapped_column(String(60))
-    status: Mapped[str] = mapped_column(String(10), default="active")  # active / released / expired
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime)
-    released_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    created_by: Mapped[str] = mapped_column(String(10), default="user")
-
-
 class Merchant(Base):
     __tablename__ = "merchants"
     id: Mapped[str] = mapped_column(String(32), primary_key=True)

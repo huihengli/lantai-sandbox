@@ -84,12 +84,6 @@ def test_risky_merchant_blocked(client, lin):
     assert pay(client, lin, merchant="mch_nope")["error"]["code"] == "MERCHANT_NOT_FOUND"
 
 
-def test_hold_reduces_spendable(client, lin):
-    client.post("/api/v1/accounts/acc_001/holds", json={"amount": "50700.00"}, headers=lin.agent)
-    r = pay(client, lin, amount="200.00")
-    assert r["error"]["code"] == "INSUFFICIENT_BALANCE" and not r["error"]["details"]
-
-
 def test_confirm_rechecks_card_state(client, lin):
     r = pay(client, lin, merchant="mch_video", amount="25.00", order="V-1")
     client.post("/api/v1/cards/crd_001/freeze", headers=lin.agent)

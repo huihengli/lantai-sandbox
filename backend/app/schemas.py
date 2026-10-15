@@ -110,16 +110,6 @@ class MandateCancelIn(PrepareBase):
     mandate_id: str | None = Field(None, max_length=40)  # 由路径参数填充
 
 
-class HoldIn(BaseModel):
-    amount: str = Field(max_length=24)
-    purpose: str | None = Field(None, max_length=60)
-    until: str | None = Field(None, max_length=40)  # ISO8601 日期/时间；留空表示直到释放
-
-
-class HoldReleaseIn(PrepareBase):
-    hold_id: str | None = Field(None, max_length=40)  # 由路径参数填充
-
-
 class MerchantPayIn(PrepareBase):
     card_id: str = Field(max_length=40)
     merchant_id: str = Field(max_length=40)

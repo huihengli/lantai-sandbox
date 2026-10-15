@@ -17,7 +17,7 @@ const nav = [
   { to: "/transfer", label: "转账", icon: PhArrowsLeftRight },
   { to: "/payees", label: "收款人", icon: PhUsers },
   { to: "/cards", label: "卡片与额度", icon: PhCreditCard },
-  { to: "/funds", label: "代扣与预留", icon: PhRepeat },
+  { to: "/funds", label: "代扣协议", icon: PhRepeat },
   { to: "/pay", label: "商户支付", icon: PhStorefront },
   { to: "/deposits", label: "定期存款", icon: PhVault },
   { to: "/wealth", label: "理财", icon: PhChartLineUp },

@@ -12,7 +12,6 @@ class RiskContext:
     now: datetime  # naive UTC
     local_now: datetime
     fee_cents: int = 0
-    held_cents: int = 0  # 已预留金额，可用余额 = 余额 - 预留
     today_out_cents: int = 0
     recent_out_count: int = 0
     autopays: list[tuple[str, int, str]] = field(default_factory=list)  # (商户, 金额, 日期)

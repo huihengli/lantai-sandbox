@@ -83,7 +83,7 @@ def build_subscribe_plan(db: Session, user: User, params: dict, now, lock: bool 
     shares_c = amount * 10000 // prod.nav_bp
     if amount < prod.min_amount_cents or shares_c <= 0:
         raise LantaiError("AMOUNT_BELOW_MIN", f"低于起购额 {fmt(prod.min_amount_cents)} 元")
-    avail = acct.available_cents(db, acc)
+    avail = acc.balance_cents
     if avail < amount:
         raise LantaiError("INSUFFICIENT_BALANCE", "余额不足")
     level, status = risk_profile.current(user, now)

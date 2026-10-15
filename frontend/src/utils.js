@@ -28,7 +28,7 @@ export function greeting(date = new Date()) {
 export const OP_TYPE = {
   transfer: "转账", deposit_create: "存入定期", deposit_early_withdraw: "提前支取定期",
   card_apply: "申请新卡", card_unfreeze: "解冻/解锁卡片", card_reissue: "补发新卡", card_report_loss: "挂失卡片", card_controls: "调整交易开关",
-  card_limits: "调整卡片额度", account_limits: "调整转账额度", mandate_cancel: "取消代扣", hold_release: "释放预留", merchant_payment: "商户支付", wealth_subscribe: "申购理财", wealth_redeem: "赎回理财",
+  card_limits: "调整卡片额度", account_limits: "调整转账额度", mandate_cancel: "取消代扣", merchant_payment: "商户支付", wealth_subscribe: "申购理财", wealth_redeem: "赎回理财",
 };
 
 /** 操作列表/卡片上的一行摘要：有金额显示金额，否则显示动作 */

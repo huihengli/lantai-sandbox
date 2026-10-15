@@ -1,6 +1,6 @@
 # 澜台 Agent 接口文档
 
-> 更新日期：2026-10-14　版本：与后端 1.0.0 同步（共 45 个 Agent 通道接口），已包含安全加固后的对外行为
+> 更新日期：2026-10-15　版本：与后端 1.0.0 同步（共 43 个 Agent 通道接口），已包含安全加固后的对外行为
 > 本文由脚本从运行中的 FastAPI 应用提取接口与请求结构，并补充手写说明生成。开发环境可对照 `GET /openapi.json`；生产模式该接口默认关闭，以本文为准。本文用于指导 MCP 工具的设计。
 
 ## 目录
@@ -26,7 +26,7 @@
 |---|---|
 | 后端不信任 Agent | 限额、黑名单、余额、归属、适当性全部由后端校验；Agent 的意图摘要只写入审计，不参与判定 |
 | Agent 没有确认权 | 所有会动钱或放宽权限的操作只能 `prepare`；确认与 OTP 由用户在银行确认中心完成，或由用户在 Agent 侧**确认执行器**弹出的确认框中手动完成（执行器使用独立令牌与 `/api/exec` 通道，见第 12 节） |
-| 收紧立即生效，放宽或不可逆需确认 | 冻结/关开关/调低额度/创建预留可由 Agent 直接执行；**挂失（不可撤销）**、解冻/补发/调高额度/开境外/释放预留必须经用户确认 |
+| 收紧立即生效，放宽或不可逆需确认 | 冻结/关开关/调低额度可由 Agent 直接执行；**挂失（不可撤销）**、解冻/补发/调高额度/开境外必须经用户确认 |
 | 最小披露 | 错误、摘要、结果、事件都不返回调用方未请求的数据；**余额、可用额度、限额只能通过 `get_balance` 读取**（受 `read` 控制） |
 | 只调 `/api/v1/*` | `/ui/*`、`/admin/*`、`/api/exec/*` 不属于 LLM Agent；Agent 令牌调用 `/ui/*` 会收到 `CHANNEL_NOT_ALLOWED` 并记入审计 |
 
@@ -41,7 +41,7 @@
 |---|---|
 | `read` | 只读查询 |
 | `prepare` | 发起预处理、取消操作、管理收款人 |
-| `protect` | 仅限“收紧”且可恢复的直接操作（冻结、关开关、调低额度、创建预留）；挂失不可撤销，不在此列 |
+| `protect` | 仅限“收紧”且可恢复的直接操作（冻结、关开关、调低额度）；挂失不可撤销，不在此列 |
 
 - **数据隔离**：所有资源按令牌所属用户过滤；访问他人资源统一返回 `RESOURCE_NOT_OWNED`（404），不区分“不存在”。
 - **限频与上限**（进程内计数，超限返回 `RATE_LIMITED`，`details.retry_after_seconds` 为建议等待秒数）：
@@ -96,8 +96,6 @@
 | `CARD_STATE_INVALID` | 409 | 卡片当前状态不允许该操作 |
 | `CONFIRM_REQUIRED` | 409 | 该变更属于放宽权限或不可撤销（如挂失），须走 prepare 由用户确认（`details.use` 给出应调用的接口） |
 | `HOLDING_NOT_ACTIVE` | 409 | 持仓已结束 |
-| `HOLD_LIMIT_REACHED` | 409 | 有效预留数量已达上限 |
-| `HOLD_NOT_ACTIVE` | 409 | 预留已释放或到期 |
 | `IDEMPOTENCY_CONFLICT` | 409 | 同一幂等键对应的请求内容不一致 |
 | `MANDATE_NOT_ACTIVE` | 409 | 代扣协议已取消 |
 | `OPERATION_EXPIRED` | 409 | 操作超过 5 分钟有效期 |
@@ -110,7 +108,7 @@
 | `AMOUNT_BELOW_MIN` | 422 | 低于起存/起购额 |
 | `AMOUNT_INVALID` | 422 | 金额或份额格式不合法（须为字符串，最多两位小数，大于 0） |
 | `CURRENCY_UNSUPPORTED` | 422 | 仅支持 CNY |
-| `INSUFFICIENT_BALANCE` | 422 | 可用余额（余额 − 资金预留）不足。`message` 固定为“余额不足”（创建预留时为“余额不足以预留该金额”），`details` 为空，**不返回任何余额数字**；需要时调用 `get_balance` |
+| `INSUFFICIENT_BALANCE` | 422 | 余额不足。`message` 固定为“余额不足”，`details` 为空，**不返回任何余额数字**；需要时调用 `get_balance` |
 | `PAYEE_NAME_MISMATCH` | 422 | 保留码：目前不再返回。行内转账与添加收款人的户名不符都统一为 `PAYEE_NOT_FOUND` |
 | `PRODUCT_NOT_AVAILABLE` | 422 | 产品不存在或已下架 |
 | `SAME_ACCOUNT` | 422 | 转给同一账户 / 本人账户无需添加为收款人 |
@@ -200,7 +198,6 @@ Agent                         澜台后端                         用户（前�
 | `card_limits` | `prepare_card_limits` |
 | `account_limits` | `prepare_account_limits` |
 | `mandate_cancel` | `prepare_mandate_cancel` |
-| `hold_release` | `prepare_hold_release` |
 | `merchant_payment` | `prepare_merchant_payment` |
 | `wealth_subscribe` | `prepare_wealth_subscribe` |
 | `wealth_redeem` | `prepare_wealth_redeem` |
@@ -265,7 +262,6 @@ Agent                         澜台后端                         用户（前�
 | `CARD_APPLY` | low | 将为该账户新增一张借记卡 | 提醒用户新卡需妥善保管 |
 | `CROSS_BANK_FEE` | low | 跨行转账将收取手续费 {fee} 元 | 向用户说明手续费 |
 | `EARLY_WITHDRAW_LOSS` | low | 提前支取将损失利息 {loss} 元（到期可得 {full} 元，现仅 {early} 元） | 对比到期日期，建议用户权衡 |
-| `HOLD_RELEASE` | low | 将释放预留的 {amount} 元（用途：{purpose}），释放后这笔资金可被转出或支付 | 确认用户是有意提前动用这笔预留，而非被诱导 |
 | `MANDATE_CANCEL` | low | 取消后「{merchant}」将无法继续从该账户扣款，下次扣款日 {date} 前如仍需要服务，可能导致中断或逾期 | 提醒用户确认是否已在商户侧处理（如房租、信用卡还款需另行安排） |
 | `NAV_RISK_NOTICE` | low | 净值型产品不保本，净值会波动，可能出现本金亏损 | 向用户说明过往业绩不代表未来表现 |
 | `NIGHT_TRANSACTION` | low | 当前为夜间时段（0~6 点） | 提示用户确认是否本人操作 |
@@ -288,7 +284,6 @@ Agent                         澜台后端                         用户（前�
 | `card` | 卡片冻结/挂失/解冻/补发/开关/额度变化 | card_id, change, status |
 | `account` | 账户转账额度变化 | account_id, change |
 | `mandate` | 代扣协议取消 | mandate_id, merchant, status |
-| `hold` | 预留创建/释放/到期 | hold_id, status, amount |
 | `deposit` | 定期到期自动兑付 | holding_id, status=matured, principal, interest |
 | `risk_profile` | 用户完成风险测评 | level, label |
 
@@ -322,8 +317,8 @@ Agent                         澜台后端                         用户（前�
 #### `GET /api/v1/accounts/{account_id}/balance`
 
 - **MCP 工具名**：`get_balance`　**类别**：查询　**所需 scope**：`read`
-- **说明**：账户余额、已预留金额、可用余额、单笔/单日限额、今日已转出与剩余额度。
-- **注意**：**余额类数据只在本接口返回**（其它接口的错误、摘要、结果、事件均不再带余额）。转账前用 `available` 判断，不要用 `balance`。`today_transferred_out` 仅统计转账类别；风控的单日限额口径还包含卡片/商户支付，`daily_remaining` 仅供参考，以 prepare 的风控结果为准。
+- **说明**：账户余额、可用余额、单笔/单日限额、今日已转出与剩余额度。
+- **注意**：**余额类数据只在本接口返回**（其它接口的错误、摘要、结果、事件均不再带余额）。转账前用 `available` 判断（目前与 `balance` 相同）。`today_transferred_out` 仅统计转账类别；风控的单日限额口径还包含卡片/商户支付，`daily_remaining` 仅供参考，以 prepare 的风控结果为准。
 - **路径参数**：`account_id`
 
 #### `GET /api/v1/accounts/{account_id}/transactions`
@@ -664,7 +659,7 @@ Agent                         澜台后端                         用户（前�
 
 | 查询参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `status` | string（^(active\|cancelled)$） | 否 | 状态过滤：mandates 为 active / cancelled；holds 为 active / released / expired |
+| `status` | string（^(active\|cancelled)$） | 否 | 状态过滤：active / cancelled |
 
 #### `POST /api/v1/mandates/{mandate_id}/cancel/prepare`
 
@@ -679,45 +674,7 @@ Agent                         澜台后端                         用户（前�
 
 > prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）、`agent_context: {intent_summary, user_utterance_excerpt}`（只写入审计，不参与判定），以及 `step_up: "otp"`（Agent 判定为高风险时要求加强验证，只能变严，见 4.4）。
 
-### 7.7 资金预留
-
-#### `GET /api/v1/accounts/{account_id}/holds`
-
-- **MCP 工具名**：`list_holds`　**类别**：查询　**所需 scope**：`read`
-- **说明**：账户的资金预留列表；到期的预留会被标记为 expired。
-- **路径参数**：`account_id`
-
-| 查询参数 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `status` | string（^(active\|released\|expired)$） | 否 | 状态过滤：mandates 为 active / cancelled；holds 为 active / released / expired |
-
-#### `POST /api/v1/accounts/{account_id}/holds`
-
-- **MCP 工具名**：`create_hold`　**类别**：直接生效　**所需 scope**：`protect`
-- **说明**：预留（锁定）一笔资金，立即生效。预留部分不可转出、存定期、支付或代扣。
-- **注意**：`until` 可选，最长 366 天，每账户最多 10 笔有效预留。释放需 `prepare_hold_release`。响应只含预留本身，不再返回预留后的可用余额；余额不足返回 `INSUFFICIENT_BALANCE`。
-- **路径参数**：`account_id`
-
-| 请求体字段 | 类型 | 必填 | 默认 | 说明 |
-|---|---|---|---|---|
-| `amount` | string（≤24） | 是 |  | 金额，字符串，最多两位小数，大于 0 |
-| `purpose` | string（≤60） | 否 |  | 用途说明，≤60 字 |
-| `until` | string（≤40） | 否 |  | 到期日：ISO 日期（含当天）或带/不带时区的时间；缺省=直到释放，最长 366 天 |
-
-#### `POST /api/v1/holds/{hold_id}/release/prepare`
-
-- **MCP 工具名**：`prepare_hold_release`　**类别**：预处理　**所需 scope**：`prepare`
-- **说明**：释放预留预处理。
-- **注意**：放宽类操作，需用户确认。
-- **路径参数**：`hold_id`
-
-| 请求体字段 | 类型 | 必填 | 默认 | 说明 |
-|---|---|---|---|---|
-| `hold_id` | string（≤40） | 否 |  |  |
-
-> prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）、`agent_context: {intent_summary, user_utterance_excerpt}`（只写入审计，不参与判定），以及 `step_up: "otp"`（Agent 判定为高风险时要求加强验证，只能变严，见 4.4）。
-
-### 7.8 商户支付
+### 7.7 商户支付
 
 #### `GET /api/v1/merchants`
 
@@ -740,7 +697,7 @@ Agent                         澜台后端                         用户（前�
 
 > prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）、`agent_context: {intent_summary, user_utterance_excerpt}`（只写入审计，不参与判定），以及 `step_up: "otp"`（Agent 判定为高风险时要求加强验证，只能变严，见 4.4）。
 
-### 7.9 风险测评与理财
+### 7.8 风险测评与理财
 
 #### `GET /api/v1/risk-profile`
 
@@ -793,19 +750,19 @@ Agent                         澜台后端                         用户（前�
 
 > prepare 接口可额外携带 `idempotency_key`（或请求头 `Idempotency-Key`）、`agent_context: {intent_summary, user_utterance_excerpt}`（只写入审计，不参与判定），以及 `step_up: "otp"`（Agent 判定为高风险时要求加强验证，只能变严，见 4.4）。
 
-### 7.10 事件流
+### 7.9 事件流
 
 #### `GET /api/v1/events`
 
 - **MCP 工具名**：`get_events`　**类别**：查询　**所需 scope**：`read`
-- **说明**：递增事件流：入账/扣款、操作状态变化、卡片/协议/预留变化、定期到期、风险测评。
+- **说明**：递增事件流：入账/扣款、操作状态变化、卡片/协议变化、定期到期、风险测评。
 - **注意**：Agent 自行保存 `next_after_id` 并轮询，用于提醒、对账与定时触发。银行不推送。事件**不含余额**；保留 30 天，过期事件会被惰性清理，游标过旧则取不到更早事件。
 
 | 查询参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `after_id` | integer | 否 | 只返回 id 大于此值的事件（默认 0，范围 0~） |
 | `limit` | integer | 否 | 每页条数（默认 50，范围 1~200） |
-| `types` | string | 否 | 逗号分隔：txn_in,txn_out,operation,card,account,mandate,hold |
+| `types` | string | 否 | 逗号分隔：txn_in,txn_out,operation,card,account,mandate |
 
 ## 8. MCP 工具设计建议
 
@@ -848,9 +805,6 @@ Agent                         澜台后端                         用户（前�
 | `prepare_account_limits` | `POST /api/v1/accounts/{account_id}/limits/prepare` | 预处理 | `prepare` |
 | `list_mandates` | `GET /api/v1/mandates` | 查询 | `read` |
 | `prepare_mandate_cancel` | `POST /api/v1/mandates/{mandate_id}/cancel/prepare` | 预处理 | `prepare` |
-| `list_holds` | `GET /api/v1/accounts/{account_id}/holds` | 查询 | `read` |
-| `create_hold` | `POST /api/v1/accounts/{account_id}/holds` | 直接生效 | `protect` |
-| `prepare_hold_release` | `POST /api/v1/holds/{hold_id}/release/prepare` | 预处理 | `prepare` |
 | `list_merchants` | `GET /api/v1/merchants` | 查询 | `read` |
 | `prepare_merchant_payment` | `POST /api/v1/payments/merchant/prepare` | 预处理 | `prepare` |
 | `get_events` | `GET /api/v1/events` | 查询 | `read` |

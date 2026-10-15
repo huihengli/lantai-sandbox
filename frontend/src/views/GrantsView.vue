@@ -91,7 +91,7 @@ async function revoke(g) {
       <ul class="bounds">
         <li class="yes"><PhEye :size="20" aria-hidden="true" /><div><strong>read</strong><br /><span class="muted">查询账户、流水、收款人、定期产品与持有</span></div></li>
         <li class="yes"><PhPaperPlaneTilt :size="20" aria-hidden="true" /><div><strong>prepare</strong><br /><span class="muted">发起转账/定期的“预处理”并取消自己发起的操作</span></div></li>
-        <li class="yes"><PhShieldCheck :size="20" aria-hidden="true" /><div><strong>protect</strong><br /><span class="muted">仅限“收紧”类直接操作：冻结卡片、关闭交易开关、调低额度、创建资金预留。挂失与放宽类（解冻、提额、开境外）仍需您确认。</span></div></li>
+        <li class="yes"><PhShieldCheck :size="20" aria-hidden="true" /><div><strong>protect</strong><br /><span class="muted">仅限“收紧”类直接操作：冻结卡片、关闭交易开关、调低额度。挂失与放宽类（解冻、提额、开境外）仍需您确认。</span></div></li>
         <li class="yes"><PhCursorClick :size="20" aria-hidden="true" /><div><strong>confirm / otp（仅确认执行器）</strong><br /><span class="muted">只发给确认执行器令牌：执行器弹出确认框，由您手动确认（必要时输入验证码）后才执行。智能助手令牌本身没有确认权。</span></div></li>
         <li class="no"><PhProhibit :size="20" aria-hidden="true" /><div><strong>grant</strong><br /><span class="muted">永不签发。签发与撤销授权只能由您在用户界面完成。</span></div></li>
       </ul>

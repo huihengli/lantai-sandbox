@@ -1,5 +1,5 @@
 """商户支付：用借记卡向商户付款（线上/线下/境外）。
-受卡片状态、交易开关、卡片额度、商户风险、可用余额（含预留）约束，走 prepare → 确认。
+受卡片状态、交易开关、卡片额度、商户风险、余额约束，走 prepare → 确认。
 订花、订蛋糕、买会员这类场景由 Agent 在此之上编排；银行不做商户下单。"""
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -43,7 +43,7 @@ def build_plan(db: Session, user: User, params: dict, now, lock: bool = False) -
             Transaction.account_id.in_(_user_accounts(user.id)), Transaction.direction == "out",
             Transaction.counterparty_name == merchant.name, Transaction.memo == params["order_ref"])):
         raise LantaiError("ORDER_ALREADY_PAID", "该订单号已向此商户支付过", {"order_ref": params["order_ref"]})
-    avail = acct.available_cents(db, acc)
+    avail = acc.balance_cents
     if avail < amount:
         raise LantaiError("INSUFFICIENT_BALANCE", "余额不足")
 

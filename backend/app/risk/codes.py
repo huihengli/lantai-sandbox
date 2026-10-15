@@ -29,8 +29,6 @@ CATALOG: dict[str, tuple[str, str, str]] = {
     "LIMIT_RAISE": ("high", "单日额度将由 {old} 元提高到 {new} 元，被盗刷或诈骗时的潜在损失同步扩大", "询问提额原因，建议按需、临时提额"),
     "MANDATE_CANCEL": ("low", "取消后「{merchant}」将无法继续从该账户扣款，下次扣款日 {date} 前如仍需要服务，可能导致中断或逾期",
                        "提醒用户确认是否已在商户侧处理（如房租、信用卡还款需另行安排）"),
-    "HOLD_RELEASE": ("low", "将释放预留的 {amount} 元（用途：{purpose}），释放后这笔资金可被转出或支付",
-                     "确认用户是有意提前动用这笔预留，而非被诱导"),
     "CARD_NOT_USABLE": ("blocked", "卡片当前为{status}，无法支付", "引导用户先处理卡片状态（解冻/补发），不要换卡重试以绕过风控"),
     "CONTROL_DISABLED": ("blocked", "该卡片的「{name}」开关已关闭，无法完成本次支付", "如确需支付，可引导用户在确认中心打开对应开关（需验证）"),
     "CARD_LIMIT_EXCEEDED": ("blocked", "超过卡片额度：单笔 {single} 元 / 单日 {daily} 元（今日已用 {used} 元）", "告知额度，建议分日或提额（需验证）"),
