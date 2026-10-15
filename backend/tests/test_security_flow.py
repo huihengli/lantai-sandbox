@@ -182,3 +182,18 @@ def test_openapi_and_spa_fallback(client):
     if os.path.isfile(os.path.join(_DIST, "index.html")):
         assert "<div id=\"app\">" in client.get("/confirm/op_x").text
         assert client.get("/api/v1/nope").json()["error"]["code"] == "NOT_FOUND"
+
+
+def test_agent_clock_follows_simulated_time(client, lin):
+    client.post("/admin/clock", json={"set_time": "2026-10-09T02:30:00"}, headers=ADMIN)
+    r = client.get("/api/v1/clock", headers=lin.agent).json()
+    assert r["ok"] and r["data"]["now"].startswith("2026-10-09T02:30") and set(r["data"]) == {"now"}
+
+
+def test_agent_clock_requires_read_scope_and_agent_channel(client, lin):
+    assert client.get("/api/v1/clock").json()["error"]["code"] == "AUTH_INVALID"
+    g = client.post("/ui/agent-grants", json={"scopes": ["prepare"]}, headers=lin.session).json()["data"]
+    no_read = {"Authorization": "Bearer " + g["agent_token"]}
+    assert client.get("/api/v1/clock", headers=no_read).json()["error"]["code"] == "SCOPE_INSUFFICIENT"
+    assert client.get("/api/v1/clock", headers=lin.executor).json()["error"]["code"] == "CHANNEL_NOT_ALLOWED"
+    assert client.post("/api/v1/clock", json={"advance_seconds": 60}, headers=lin.agent).status_code == 405

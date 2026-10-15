@@ -27,6 +27,41 @@ def test_one_grant_issues_both_tokens(client, lin):
     assert client.post("/ui/executor-grants", json={}, headers=lin.session).status_code in (404, 405)
 
 
+
+def test_long_lived_grant_lasts_seven_days(client, lin):
+    from datetime import datetime, timedelta, timezone
+    from app import clock, config
+
+    def expiry(g):
+        return datetime.fromisoformat(g["expires_at"]).astimezone(timezone.utc).replace(tzinfo=None) - clock.now()
+
+    # 默认仍是 30 分钟，普通授权请求 7 天会被截断到 60 分钟上限
+    assert expiry(grant(client, lin)["data"]) <= timedelta(seconds=config.AGENT_TOKEN_TTL_SECONDS)
+    short = grant(client, lin, ttl_seconds=config.AGENT_TOKEN_LONG_TTL_SECONDS)["data"]
+    assert expiry(short) <= timedelta(seconds=config.AGENT_TOKEN_MAX_TTL_SECONDS)
+    # 长期凭证：默认 168 小时，超出也只到 168 小时；执行器令牌同一有效期，scope 不变
+    g = grant(client, lin, long_lived=True)["data"]
+    assert timedelta(hours=167) < expiry(g) <= timedelta(hours=168)
+    assert g["scopes"] == ["prepare", "protect", "read"] and g["executor_scopes"] == ["confirm", "otp"]
+    capped = grant(client, lin, long_lived=True, ttl_seconds=30 * 24 * 3600)["data"]
+    assert expiry(capped) <= timedelta(hours=168)
+    assert grant(client, lin, long_lived=True, scopes=["read", "confirm"])["error"]["code"] == "SCOPE_INSUFFICIENT"
+    agent, exe = ({"Authorization": f"Bearer {g[k]}"} for k in ("agent_token", "executor_token"))
+    # Agent 令牌不能给自己续签长期凭证
+    assert client.post("/ui/agent-grants", json={"long_lived": True}, headers=agent).json()["error"]["code"]         == "CHANNEL_NOT_ALLOWED"
+    clock.advance(6 * 24 * 3600)
+    assert client.get("/api/v1/accounts", headers=agent).json()["ok"]
+    clock.advance(24 * 3600)
+    assert client.get("/api/v1/accounts", headers=agent).json()["error"]["code"] == "AUTH_EXPIRED"
+    assert client.post("/api/exec/operations/op_x/confirm", headers=exe).json()["error"]["code"] == "AUTH_EXPIRED"
+
+
+def test_long_lived_grant_revocable(client, lin):
+    g = grant(client, lin, long_lived=True)["data"]
+    agent = {"Authorization": f"Bearer {g['agent_token']}"}
+    client.delete(f"/ui/agent-grants/{g['grant_id']}", headers=lin.session)
+    assert client.get("/api/v1/accounts", headers=agent).json()["error"]["code"] == "AUTH_REVOKED"
+
 def test_channels_are_isolated(client, lin, exe):
     op = lin.transfer("100.00")["data"]["operation_id"]
     # 执行器令牌不能访问 Agent 通道与用户通道

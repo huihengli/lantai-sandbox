@@ -47,6 +47,7 @@ class LoginIn(BaseModel):
 class GrantIn(BaseModel):
     scopes: list[str] = Field(max_length=5, default=["read", "prepare", "protect"])
     ttl_seconds: int | None = Field(None, gt=0)
+    long_lived: bool = False  # 长期凭证：默认与上限改为 AGENT_TOKEN_LONG_TTL_SECONDS，须用户显式选择
     with_executor: bool = True  # 同时签发绑定的确认执行器令牌（同一授权、同一有效期、一起撤销）
 
 

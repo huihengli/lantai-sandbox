@@ -45,6 +45,12 @@ def me(request: Request, p: Principal = READ):
                         "token_expires_at": clock.iso(p.token.expires_at)})
 
 
+@router.get("/clock")
+def current_time(request: Request, p: Principal = READ):
+    # 只给银行侧当前时间（演示时钟可能被调整），不暴露是否模拟、偏移量等内部状态
+    return ok(request, {"now": clock.iso(clock.now())})
+
+
 @router.get("/accounts")
 def accounts(request: Request, p: Principal = READ, db: Session = Depends(get_db)):
     rows = db.scalars(select(Account).where(Account.user_id == p.user.id).order_by(Account.id))

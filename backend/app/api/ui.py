@@ -81,7 +81,10 @@ def create_grant(body: GrantIn, request: Request, p: Principal = Depends(require
         bad = set(body.scopes) - auth.AGENT_ALLOWED_SCOPES
         if bad or not body.scopes:
             raise LantaiError("SCOPE_INSUFFICIENT", f"Agent 令牌只能包含 read/prepare/protect，拒绝: {sorted(bad)}")
-        ttl = min(body.ttl_seconds or config.AGENT_TOKEN_TTL_SECONDS, config.AGENT_TOKEN_MAX_TTL_SECONDS)
+        if body.long_lived:
+            ttl = min(body.ttl_seconds or config.AGENT_TOKEN_LONG_TTL_SECONDS, config.AGENT_TOKEN_LONG_TTL_SECONDS)
+        else:
+            ttl = min(body.ttl_seconds or config.AGENT_TOKEN_TTL_SECONDS, config.AGENT_TOKEN_MAX_TTL_SECONDS)
         token, row = auth.issue_token(db, "agent_token", p.user.id, sorted(set(body.scopes)), ttl,
                                       issued_by=p.token.id)
         out = {"grant_id": row.id, "agent_token": token, "scopes": sorted(set(body.scopes)),
@@ -93,7 +96,8 @@ def create_grant(body: GrantIn, request: Request, p: Principal = Depends(require
             ex_row.expires_at = row.expires_at
             out.update(executor_token=ex_token, executor_scopes=sorted(auth.EXECUTOR_ALLOWED_SCOPES))
         audit.log(ctx, "grant_agent_token", detail={"grant_id": row.id, "scopes": body.scopes,
-                                                    "with_executor": body.with_executor})
+                                                    "with_executor": body.with_executor,
+                                                    "long_lived": body.long_lived})
         return out
 
     return ok(request, audit.guarded(ctx, "grant_agent_token", run))

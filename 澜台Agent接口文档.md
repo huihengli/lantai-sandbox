@@ -34,7 +34,7 @@
 
 - **Base URL**：开发环境默认 `http://localhost:8001`（以部署为准）。
 - **认证**：`Authorization: Bearer <agent_token>`。令牌由**用户**在前端“助手授权”页签发，明文只显示一次。
-- **有效期**：默认 30 分钟，最长 60 分钟；用户可随时撤销（撤销后返回 `AUTH_REVOKED`）。到期需让用户重新授权。
+- **有效期**：默认 30 分钟，最长 60 分钟；用户签发时可显式选择**长期凭证**（`long_lived=true`），默认与上限均为 7 天（168 小时）；用户可随时撤销（撤销后返回 `AUTH_REVOKED`）。到期需让用户重新授权。
 - **scopes**（Agent 令牌只可能包含以下三种，永远没有 `confirm` / `otp`；确认能力属于独立的执行器令牌，见第 12 节）：
 
 | scope | 含义 |
@@ -307,6 +307,12 @@ Agent                         澜台后端                         用户（前�
 - **MCP 工具名**：`get_me`　**类别**：查询　**所需 scope**：`read`
 - **说明**：当前用户概要与令牌的权限范围、过期时间。
 - **注意**：接入后第一个调用，用来确认令牌类型与 scopes。
+
+#### `GET /api/v1/clock`
+
+- **MCP 工具名**：`get_bank_time`　**类别**：查询　**所需 scope**：`read`
+- **说明**：银行侧当前时间（澜台本地时区，ISO8601 带偏移），返回 `{"now": "2026-10-09T02:30:00+08:00"}`。
+- **注意**：演示环境下银行时钟可能被调整（快进、设到夜间等），与 Agent 本机时间不一致。判断“今天/本月”、单日限额、夜间交易、令牌与操作过期、定期到期时，以本接口时间为准，不要用本机时间。只读，Agent 无法修改时钟。
 
 #### `GET /api/v1/accounts`
 
@@ -810,6 +816,7 @@ Agent                         澜台后端                         用户（前�
 | 工具名 | 方法与路径 | 类别 | scope |
 |---|---|---|---|
 | `get_me` | `GET /api/v1/me` | 查询 | `read` |
+| `get_bank_time` | `GET /api/v1/clock` | 查询 | `read` |
 | `list_accounts` | `GET /api/v1/accounts` | 查询 | `read` |
 | `get_balance` | `GET /api/v1/accounts/{account_id}/balance` | 查询 | `read` |
 | `list_transactions` | `GET /api/v1/accounts/{account_id}/transactions` | 查询 | `read` |
@@ -981,7 +988,7 @@ Agent                         澜台后端                         用户（前�
 
 | 接口 | scope | 说明 |
 |---|---|---|
-| `POST /ui/agent-grants` | `grant` | body：`{"scopes": [...], "ttl_seconds": 1800, "with_executor": true}`；`with_executor` 默认 `true`。返回 `grant_id`、`agent_token`、`scopes`、`expires_at`，以及 `executor_token`、`executor_scopes`（`with_executor=false` 时不返回） |
+| `POST /ui/agent-grants` | `grant` | body：`{"scopes": [...], "ttl_seconds": 1800, "long_lived": false, "with_executor": true}`；`with_executor` 默认 `true`；`long_lived=true` 时有效期默认且最长 7 天（168 小时），否则最长 60 分钟。返回 `grant_id`、`agent_token`、`scopes`、`expires_at`，以及 `executor_token`、`executor_scopes`（`with_executor=false` 时不返回） |
 | `GET /ui/agent-grants` | `read` | 每条授权多一个 `executor` 布尔字段，表示是否绑定了执行器令牌（不含任何令牌明文） |
 | `DELETE /ui/agent-grants/{grant_id}` | `grant` | 撤销授权，Agent 令牌与绑定的执行器令牌同时失效 |
 

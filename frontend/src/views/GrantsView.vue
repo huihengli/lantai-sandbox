@@ -9,6 +9,7 @@ import { errorText, fmtTime } from "../utils";
 const grants = ref([]);
 const issued = ref(null);
 const ttl = ref(1800);
+const LONG_TTL = 7 * 24 * 3600;
 const copied = ref("");
 const busy = ref(false);
 
@@ -18,7 +19,7 @@ onMounted(load);
 async function issue() {
   busy.value = true;
   try {
-    issued.value = await api.createGrant(Number(ttl.value));
+    issued.value = await api.createGrant(Number(ttl.value), Number(ttl.value) === LONG_TTL);
     copied.value = "";
     toast("已签发 Agent 令牌与确认执行器令牌，仅此一次显示");
     await load();
@@ -60,8 +61,10 @@ async function revoke(g) {
         <select id="g-ttl" v-model="ttl" class="select">
           <option :value="600">10 分钟</option>
           <option :value="1800">30 分钟</option>
-          <option :value="3600">60 分钟（上限）</option>
+          <option :value="3600">60 分钟</option>
+          <option :value="LONG_TTL">7 天（长期凭证）</option>
         </select>
+        <p v-if="Number(ttl) === LONG_TTL" class="hint">长期凭证 7 天内持续有效，泄露风险更高。请妥善保管，不再使用时及时撤销。</p>
       </div>
       <button class="btn primary" type="button" :disabled="busy" @click="issue"><PhKey :size="20" aria-hidden="true" />签发 Agent 令牌</button>
 

@@ -7,7 +7,7 @@ export const api = {
   login: (phone, password) => request("POST", "/ui/login", { body: { phone, password }, auth: false }),
   logout: () => request("POST", "/ui/logout"),
   grants: () => request("GET", "/ui/agent-grants"),
-  createGrant: (ttl_seconds) => request("POST", "/ui/agent-grants", { body: { scopes: ["read", "prepare", "protect"], ttl_seconds } }),
+  createGrant: (ttl_seconds, long_lived = false) => request("POST", "/ui/agent-grants", { body: { scopes: ["read", "prepare", "protect"], ttl_seconds, long_lived } }),
   revokeGrant: (id) => request("DELETE", `/ui/agent-grants/${id}`),
   operations: (status) => request("GET", "/ui/operations", { query: { status } }),
   operation: (id) => request("GET", `/ui/operations/${id}`),
