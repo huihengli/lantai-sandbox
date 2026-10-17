@@ -300,7 +300,7 @@ Agent                         澜台后端                         用户（前�
 #### `GET /api/v1/me`
 
 - **MCP 工具名**：`get_me`　**类别**：查询　**所需 scope**：`read`
-- **说明**：当前用户概要与令牌的权限范围、过期时间。
+- **说明**：当前用户概要与令牌的权限范围、过期时间，以及所属授权编号 `grant_id` 与签发时间 `token_issued_at`（银行时钟，带时区偏移，与 `GET /api/v1/clock` 同一时区）。
 - **注意**：接入后第一个调用，用来确认令牌类型与 scopes。
 
 #### `GET /api/v1/clock`
@@ -952,6 +952,7 @@ Agent 运行时拿到两枚令牌后：`agent_token` 交给 LLM 使用的 MCP �
 
 | 接口 | scope | 说明 |
 |---|---|---|
+| `GET /api/exec/me` | 无（有效执行器令牌即可） | 执行器用自己的令牌核验身份。返回 `token_kind`、`user_id`、`grant_id`、`scopes`、`issued_at`（所属授权签发时间）、`expires_at`（与 Agent 令牌 `token_expires_at` 相同）；时间均为银行时钟、带时区偏移。`grant_id` / `user_id` 与同一次签发的 Agent 令牌调用 `GET /api/v1/me` 所得一致。只读、不延长有效期；写审计 `exec_whoami`（`actor=executor`，`detail.grant_id`） |
 | `GET /api/exec/operations/{op_id}` | `confirm` | 渲染确认框用。内容与用户确认中心一致：`summary`（含 `balance_after`）、完整风控文案、`status`（`OTP_PENDING` 表示需要验证码）、`expires_at` |
 | `POST /api/exec/operations/{op_id}/verify-otp` | `otp` | body：`{"code": "123456"}`，提交用户在确认框输入的验证码；返回按 Agent 视图裁剪；错误返回 `OTP_INVALID`（`details.attempts_left`），3 次后 `OTP_LOCKED`；每用户 10 分钟错 10 次后 `RATE_LIMITED` |
 | `POST /api/exec/operations/{op_id}/confirm` | `confirm` | 用户点击“确认”后调用。与 `/ui` 确认相同：重新风控、重新校验余额与状态，同一操作只执行一次；需要 OTP 而未验证时返回 `OTP_REQUIRED`。返回按 Agent 视图裁剪（无 `balance_after`），确认时风控复核拦截返回 `RISK_BLOCKED`，其 `details.reasons` 已中性化 |

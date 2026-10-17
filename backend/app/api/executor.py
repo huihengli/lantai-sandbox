@@ -8,7 +8,9 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from app.api.common import ok
+from app import clock
 from app.db import get_db
+from app.models import AuthToken
 from app.schemas import OtpIn
 from app.security.auth import Principal, make_ctx, require
 from app.services import audit, operation
@@ -17,6 +19,19 @@ router = APIRouter(prefix="/api/exec", tags=["executor"])
 
 CONFIRM = Depends(require("confirm", executor_only=True))
 OTP = Depends(require("otp", executor_only=True))
+EXECUTOR = Depends(require(executor_only=True))  # 仅认人：有效执行器令牌即可，不额外要求 scope
+
+
+@router.get("/me")
+def me(request: Request, p: Principal = EXECUTOR, db: Session = Depends(get_db)):
+    """执行器用自己的令牌向银行核验身份，不依赖运行时转交的 user_id。
+    只返回认人所需字段；issued_at 取所属授权的签发时间，供"锁定后重新授权"判断。"""
+    grant = db.get(AuthToken, p.token.issued_by)
+    audit.log(make_ctx(request, db, p), "exec_whoami")  # grant_id 由 ctx 自动写入 detail
+    db.commit()
+    return ok(request, {"token_kind": p.kind, "user_id": p.user.id, "grant_id": p.token.issued_by,
+                        "scopes": sorted(p.scopes), "issued_at": clock.iso(grant.created_at if grant else None),
+                        "expires_at": clock.iso(p.token.expires_at)})
 
 
 @router.get("/operations/{op_id}")

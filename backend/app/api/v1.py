@@ -42,7 +42,8 @@ def _owned(db: Session, p: Principal, account_id: str) -> Account:
 def me(request: Request, p: Principal = READ):
     return ok(request, {"user_id": p.user.id, "name": p.user.name, "phone_masked": p.user.phone_masked,
                         "token_kind": p.kind, "scopes": sorted(p.scopes),
-                        "token_expires_at": clock.iso(p.token.expires_at)})
+                        "token_expires_at": clock.iso(p.token.expires_at),
+                        "grant_id": p.token.id, "token_issued_at": clock.iso(p.token.created_at)})
 
 
 @router.get("/clock")

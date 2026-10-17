@@ -169,3 +169,55 @@ def test_executor_risk_block_reasons_are_neutral(client, lin, exe):
     assert err["code"] == "RISK_BLOCKED"
     daily = next(r for r in err["details"]["reasons"] if r["code"] == "DAILY_LIMIT_EXCEEDED")
     assert daily["params"] == {} and "600.00" not in daily["message"]  # 不向上下文泄露今日已转出
+
+
+def test_exec_me_identifies_executor_and_matches_agent_me(client, lin, exe):
+    from app import clock
+    r = client.get("/api/exec/me", headers=exe).json()
+    d = r["data"]
+    assert r["ok"] and set(d) == {"token_kind", "user_id", "grant_id", "scopes", "issued_at", "expires_at"}  # 最小披露
+    assert d["token_kind"] == "executor_token" and d["scopes"] == ["confirm", "otp"]
+    a = client.get("/api/v1/me", headers=lin.agent).json()["data"]
+    assert d["grant_id"] == a["grant_id"] == lin.grant_id and d["user_id"] == a["user_id"]
+    assert d["issued_at"] == a["token_issued_at"] and d["expires_at"] == a["token_expires_at"]
+    assert d["issued_at"] == clock.iso(clock.now())  # 夹具刚签发，银行时钟
+    # 只读：连续调用不延长有效期；审计 actor=executor、channel=exec、detail.grant_id
+    assert client.get("/api/exec/me", headers=exe).json()["data"]["expires_at"] == d["expires_at"]
+    rows = [x for x in client.get("/ui/audit", params={"actor": "executor"}, headers=lin.session).json()["data"]
+            if x["action"] == "exec_whoami"]
+    assert len(rows) == 2 and rows[0]["channel"] == "exec" and rows[0]["detail"]["grant_id"] == lin.grant_id
+
+
+def test_exec_me_rejects_other_channels_and_bad_tokens(client, lin):
+    assert client.get("/api/exec/me", headers=lin.agent).json()["error"]["code"] == "CHANNEL_NOT_ALLOWED"
+    r = client.get("/api/exec/me", headers=lin.session)
+    assert r.status_code == 403 and r.json()["error"]["code"] == "CHANNEL_NOT_ALLOWED"
+    for h in ({}, {"Authorization": "Bearer lt_x_garbage"}):
+        r = client.get("/api/exec/me", headers=h)
+        assert r.status_code == 401 and r.json()["error"]["code"] == "AUTH_INVALID"
+    assert client.get("/api/v1/me", headers=lin.executor).json()["error"]["code"] == "CHANNEL_NOT_ALLOWED"
+
+
+def test_exec_me_revoked_and_expired(client, lin, exe):
+    from app import clock
+    client.delete(f"/ui/agent-grants/{lin.grant_id}", headers=lin.session)
+    r = client.get("/api/exec/me", headers=exe)
+    assert r.status_code == 401 and r.json()["error"]["code"] == "AUTH_REVOKED"
+    g = grant(client, lin)["data"]
+    h = {"Authorization": f"Bearer {g['executor_token']}"}
+    assert client.get("/api/exec/me", headers=h).json()["ok"]
+    clock.advance(3600)
+    r = client.get("/api/exec/me", headers=h)
+    assert r.status_code == 401 and r.json()["error"]["code"] == "AUTH_EXPIRED"
+
+
+def test_issued_at_follows_bank_clock_and_differs_per_grant(client, lin, exe):
+    from app import clock
+    first = client.get("/api/exec/me", headers=exe).json()["data"]
+    clock.advance(600)
+    g = grant(client, lin)["data"]
+    second = client.get("/api/exec/me", headers={"Authorization": f"Bearer {g['executor_token']}"}).json()["data"]
+    assert second["issued_at"] == clock.iso(clock.now()) != first["issued_at"]
+    assert second["grant_id"] == g["grant_id"] != first["grant_id"] and second["user_id"] == first["user_id"]
+    a = client.get("/api/v1/me", headers={"Authorization": f"Bearer {g['agent_token']}"}).json()["data"]
+    assert a["grant_id"] == g["grant_id"] and a["token_issued_at"] == second["issued_at"]
