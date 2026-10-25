@@ -110,8 +110,10 @@ def list_grants(request: Request, p: Principal = READ, db: Session = Depends(get
     with_exec = set(db.scalars(select(AuthToken.issued_by).where(
         AuthToken.user_id == p.user.id, AuthToken.kind == "executor_token",
         AuthToken.issued_by.in_([r.id for r in rows])))) if rows else set()
+    now = clock.now()  # 到期由服务端时钟判定（演示时钟可能被调整），前端不自行推算
     return ok(request, [{"grant_id": r.id, "scopes": r.scopes.split(","), "expires_at": clock.iso(r.expires_at),
-                         "executor": r.id in with_exec, "revoked": r.revoked_at is not None} for r in rows])
+                         "executor": r.id in with_exec, "revoked": r.revoked_at is not None,
+                         "expired": r.revoked_at is None and r.expires_at <= now} for r in rows])
 
 
 @router.delete("/agent-grants/{grant_id}")

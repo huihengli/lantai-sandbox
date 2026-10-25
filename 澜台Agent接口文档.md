@@ -943,7 +943,7 @@ Agent                         澜台后端                         用户（前�
 | 接口 | scope | 说明 |
 |---|---|---|
 | `POST /ui/agent-grants` | `grant` | body：`{"scopes": [...], "ttl_seconds": 1800, "long_lived": false, "with_executor": true}`；`with_executor` 默认 `true`；`long_lived=true` 时有效期默认且最长 7 天（168 小时），否则最长 60 分钟。返回 `grant_id`、`agent_token`、`scopes`、`expires_at`，以及 `executor_token`、`executor_scopes`（`with_executor=false` 时不返回） |
-| `GET /ui/agent-grants` | `read` | 每条授权多一个 `executor` 布尔字段，表示是否绑定了执行器令牌（不含任何令牌明文） |
+| `GET /ui/agent-grants` | `read` | 每条授权多一个 `executor` 布尔字段，表示是否绑定了执行器令牌；`revoked` 表示已撤销，`expired` 表示已按服务端时钟到期（二者互斥，到期时会话与执行器令牌同样不可再用；均不含任何令牌明文） |
 | `DELETE /ui/agent-grants/{grant_id}` | `grant` | 撤销授权，Agent 令牌与绑定的执行器令牌同时失效 |
 
 Agent 运行时拿到两枚令牌后：`agent_token` 交给 LLM 使用的 MCP 工具，`executor_token` 只交给执行器模块。

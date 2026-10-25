@@ -62,6 +62,25 @@ def test_long_lived_grant_revocable(client, lin):
     client.delete(f"/ui/agent-grants/{g['grant_id']}", headers=lin.session)
     assert client.get("/api/v1/accounts", headers=agent).json()["error"]["code"] == "AUTH_REVOKED"
 
+
+def test_grant_list_reflects_expiry(client, lin):
+    """到期由服务端判定：列表带 expired 标记，前端据此把"有效"改为"已过期"（不依赖浏览器时钟）。"""
+    from app import clock
+
+    g = grant(client, lin, ttl_seconds=60)["data"]
+
+    def row():
+        return {x["grant_id"]: x for x in client.get("/ui/agent-grants", headers=lin.session).json()["data"]}[g["grant_id"]]
+
+    assert row()["expired"] is False and row()["revoked"] is False
+    clock.advance(61)
+    assert row()["expired"] is True and row()["revoked"] is False  # 自然到期，不是撤销
+    agent = {"Authorization": f"Bearer {g['agent_token']}"}
+    assert client.get("/api/v1/accounts", headers=agent).json()["error"]["code"] == "AUTH_EXPIRED"
+    # 撤销语义与到期互斥，撤销后显示"已撤销"
+    client.delete(f"/ui/agent-grants/{g['grant_id']}", headers=lin.session)
+    assert row()["revoked"] is True and row()["expired"] is False
+
 def test_channels_are_isolated(client, lin, exe):
     op = lin.transfer("100.00")["data"]["operation_id"]
     # 执行器令牌不能访问 Agent 通道与用户通道

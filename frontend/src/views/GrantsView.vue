@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted, ref } from "vue";
 import { PhKey, PhCopy, PhCheck, PhProhibit, PhEye, PhPaperPlaneTilt, PhShieldCheck, PhCursorClick } from "@phosphor-icons/vue";
 import PageHeader from "../components/PageHeader.vue";
 import { api } from "../api";
@@ -12,9 +12,17 @@ const ttl = ref(1800);
 const LONG_TTL = 7 * 24 * 3600;
 const copied = ref("");
 const busy = ref(false);
+let poll;
 
-const load = async () => (grants.value = await api.grants());
-onMounted(load);
+// 到期/撤销由服务端判定，页面轮询刷新，避免授权已失效但列表仍显示"有效"
+async function load() {
+  try { grants.value = await api.grants(); } catch { /* 轮询失败不打扰用户；鉴权失效由 client 统一处理 */ }
+}
+onMounted(() => { load(); poll = setInterval(() => !document.hidden && load(), 5000); });
+onBeforeUnmount(() => clearInterval(poll));
+
+const statusOf = (g) => (g.revoked ? { text: "已撤销", cls: "muted" } : g.expired ? { text: "已过期", cls: "muted" } : { text: "有效", cls: "ok" });
+const usable = (g) => !g.revoked && !g.expired;
 
 async function issue() {
   busy.value = true;
@@ -109,8 +117,8 @@ async function revoke(g) {
             <td>{{ g.scopes.join(" / ") }}</td>
             <td>{{ g.executor ? "已绑定" : "—" }}</td>
             <td class="num">{{ fmtTime(g.expires_at) }}</td>
-            <td><span class="tag" :class="g.revoked ? 'muted' : 'ok'">{{ g.revoked ? "已撤销" : "有效" }}</span></td>
-            <td><button v-if="!g.revoked" class="btn small danger" type="button" @click="revoke(g)">撤销</button></td>
+            <td><span class="tag" :class="statusOf(g).cls">{{ statusOf(g).text }}</span></td>
+            <td><button v-if="usable(g)" class="btn small danger" type="button" @click="revoke(g)">撤销</button></td>
           </tr>
         </tbody>
       </table>
