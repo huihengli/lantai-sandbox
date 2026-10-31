@@ -49,7 +49,8 @@ def build_plan(db: Session, user: User, params: dict, now, lock: bool = False) -
 
     card_today = int(db.scalar(select(func.coalesce(func.sum(Transaction.amount_cents), 0)).where(
         Transaction.card_id == card.id, Transaction.direction == "out",
-        Transaction.occurred_at >= clock.local_day_start_utc(now))))
+        Transaction.occurred_at >= clock.local_day_start_utc(now),
+        Transaction.occurred_at < clock.local_day_end_utc(now))))
     first_time = db.scalar(select(Transaction.id).where(
         Transaction.account_id.in_(_user_accounts(user.id)), Transaction.direction == "out",
         Transaction.counterparty_name == merchant.name)) is None

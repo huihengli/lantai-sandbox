@@ -20,7 +20,8 @@ def build_context(db: Session, user_id: str, account: Account, op_type: str, amo
     today_out = db.scalar(select(func.coalesce(func.sum(Transaction.amount_cents), 0)).where(
         Transaction.account_id == account.id, Transaction.direction == "out",
         or_(Transaction.category == "transfer", Transaction.card_id.is_not(None)),  # 含卡片/商户支付，防绕过日限额
-        Transaction.occurred_at >= clock.local_day_start_utc(now)))
+        Transaction.occurred_at >= clock.local_day_start_utc(now),
+        Transaction.occurred_at < clock.local_day_end_utc(now)))
     recent = db.scalar(select(func.count()).select_from(Transaction).where(
         out_of_user, Transaction.occurred_at >= now - timedelta(seconds=config.RAPID_WINDOW_SECONDS)))
     today = clock.local(now).date()

@@ -61,9 +61,11 @@ def accounts(request: Request, p: Principal = READ, db: Session = Depends(get_db
 @router.get("/accounts/{account_id}/balance")
 def balance(account_id: str, request: Request, p: Principal = READ, db: Session = Depends(get_db)):
     a = _owned(db, p, account_id)
+    now = clock.now()
     used = db.scalar(select(func.coalesce(func.sum(Transaction.amount_cents), 0)).where(
         Transaction.account_id == a.id, Transaction.direction == "out", Transaction.category == "transfer",
-        Transaction.occurred_at >= clock.local_day_start_utc(clock.now())))
+        Transaction.occurred_at >= clock.local_day_start_utc(now),
+        Transaction.occurred_at < clock.local_day_end_utc(now)))
     return ok(request, {**_account_view(a), "available": fmt(a.balance_cents),
                         "single_limit": fmt(a.single_limit_cents), "daily_limit": fmt(a.daily_limit_cents),
                         "today_transferred_out": fmt(int(used)),

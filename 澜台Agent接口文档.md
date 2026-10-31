@@ -318,7 +318,7 @@ Agent                         澜台后端                         用户（前�
 
 - **MCP 工具名**：`get_balance`　**类别**：查询　**所需 scope**：`read`
 - **说明**：账户余额、可用余额、单笔/单日限额、今日已转出与剩余额度。
-- **注意**：**余额类数据只在本接口返回**（其它接口的错误、摘要、结果、事件均不再带余额）。转账前用 `available` 判断（目前与 `balance` 相同）。`today_transferred_out` 仅统计转账类别；风控的单日限额口径还包含卡片/商户支付，`daily_remaining` 仅供参考，以 prepare 的风控结果为准。
+- **注意**：**余额类数据只在本接口返回**（其它接口的错误、摘要、结果、事件均不再带余额）。转账前用 `available` 判断（目前与 `balance` 相同）。`today_transferred_out` 仅统计转账类别，口径是**澜台本地自然日**：当日 00:00 起、次日 00:00 止，只有落在这个区间内的流水才计入（演示时钟被往回拨之后，按更晚日期记账的流水不算今天，与 `GET .../transactions` 的当日查询口径一致）；风控的单日限额口径还包含卡片/商户支付，`daily_remaining` 仅供参考，以 prepare 的风控结果为准。
 - **路径参数**：`account_id`
 
 #### `GET /api/v1/accounts/{account_id}/transactions`
