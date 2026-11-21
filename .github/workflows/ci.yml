@@ -1,0 +1,154 @@
+# 澜台质量检查 CI —— 每次 push / pull request 自动运行。
+# 只做验证：单元与集成测试、静态检查、前端构建、后端镜像启动冒烟。
+# 不部署、不发布、不读取任何密钥；所有 job 权限仅 contents: read。
+name: 质量检查
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# 同一分支连续提交时取消上一次未跑完的检查，省算力也省等待。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ── 后端：测试（核心门禁）────────────────────────────────────────────
+  # 测试用内存 SQLite（backend/tests/conftest.py 强制 DATABASE_URL=sqlite://），
+  # 因此不需要起 PostgreSQL；固定白天时钟，结果可重复。
+  backend-test:
+    name: 后端测试 · Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.12 与 backend/Dockerfile 的运行版本一致；3.11 是本地开发常用版本。
+        python: ["3.11", "3.12"]
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+
+      - name: 安装依赖
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: 语法检查
+        run: python -m compileall -q app tests
+
+      # pytest 在收集不到测试时退出码为 5，同样会让本步失败，避免“空跑即通过”。
+      - name: 单元 / 集成测试
+        run: python -m pytest -q -p no:cacheprovider --strict-markers
+        env:
+          DATABASE_URL: sqlite://
+          PYTHONUNBUFFERED: "1"
+
+  # ── 后端：静态检查（只拦真错误，不引入风格洁癖）─────────────────────
+  # 规则集 E9/F63/F7/F82 = 语法错误、未定义名、无效的 noqa 等致命问题，
+  # 项目现有代码已通过；不做格式化，避免产生与业务无关的改动噪音。
+  backend-lint:
+    name: 后端静态检查
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装 ruff
+        run: python -m pip install "ruff==0.17.6"
+
+      - name: ruff 致命错误检查
+        run: ruff check --no-cache --select E9,F63,F7,F82 app tests
+
+  # ── 前端：两套构建（演示构建与生产构建共用同一份代码，都要能编译）───
+  frontend-build:
+    name: 前端构建
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "11"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: 安装依赖（严格锁定 lockfile）
+        run: pnpm install --frozen-lockfile
+
+      - name: 生产构建
+        run: pnpm build
+
+      - name: 生产构建产物检查
+        run: test -s dist/index.html
+
+      - name: 演示构建（VITE_ENABLE_DEMO=1）
+        run: pnpm build
+        env:
+          VITE_ENABLE_DEMO: "1"
+
+  # ── 后端镜像：能构建、能启动、/healthz 可用 ──────────────────────────
+  backend-image:
+    name: 后端镜像冒烟
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: lantai-backend:ci
+      CONTAINER: lantai-ci-smoke
+    steps:
+      - uses: actions/checkout@v4
+
+      # 直接用 docker build，验证的就是仓库里这份 Dockerfile 本身。
+      - name: 构建镜像
+        run: docker build -t "$IMAGE" backend
+
+      # 启动探针：容器起不来或健康检查不过，说明依赖/配置/建库流程坏掉了。
+      - name: 启动并探测 /healthz
+        run: |
+          docker run -d --name "$CONTAINER" -p 18001:8001 "$IMAGE"
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18001/healthz; then
+              echo "健康检查通过"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::后端容器 30 秒内未通过 /healthz"
+          docker logs "$CONTAINER" || true
+          exit 1
+
+      - name: 清理容器
+        if: always()
+        run: |
+          docker logs "$CONTAINER" > "${RUNNER_TEMP}/container.log" 2>&1 || true
+          docker rm -f "$CONTAINER" || true
+
+      - name: 容器日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 后端容器日志
+          path: ${{ runner.temp }}/container.log
+          if-no-files-found: ignore
+          retention-days: 7
