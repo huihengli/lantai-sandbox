@@ -75,5 +75,6 @@ def execute(db: Session, op, plan: Plan, now) -> dict:
     txn = acct.add_txn(db, acc, "out", "other", amount, now, counterparty=merchant.name,
                        memo=plan.params["order_ref"], operation_id=op.id,
                        merchant_category=merchant.category, card_id=card.id)
-    return {"transaction_id": txn.id, "order_ref": plan.params["order_ref"], "balance_after": fmt(acc.balance_cents),
-            "executed_at": clock.iso(now)}
+    # 商户支付不计手续费，仍返回 fee（固定 0.00），使 result 与 transfer 同构，Agent 无需按类型分支
+    return {"transaction_id": txn.id, "order_ref": plan.params["order_ref"], "fee": "0.00",
+            "balance_after": fmt(acc.balance_cents), "executed_at": clock.iso(now)}

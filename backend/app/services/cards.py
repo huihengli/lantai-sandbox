@@ -32,6 +32,12 @@ def view(c: Card) -> dict:
     }
 
 
+def brief(c: Card) -> dict:
+    """卡片操作结果的最小卡片快照：够 Agent 报出卡号与状态文案即可，不含额度、开关与创建时间。"""
+    return {"card_id": c.id, "card_no_masked": mask(c.card_no), "status": c.status,
+            "status_text": STATUS_TEXT.get(c.status, c.status)}
+
+
 def list_cards(db: Session, user_id: str) -> list[Card]:
     return list(db.scalars(select(Card).where(Card.user_id == user_id).order_by(Card.created_at, Card.id)))
 
@@ -173,7 +179,7 @@ def execute_apply(db: Session, op, plan: Plan, now) -> dict:
     acc = plan.data["account"]
     c = _create_card(db, acc, now)
     _note(db, c, "issued")
-    return {"card_id": c.id, "card_no_masked": mask(c.card_no), "executed_at": clock.iso(now)}
+    return {**brief(c), "executed_at": clock.iso(now)}
 
 
 def _create_card(db: Session, acc: Account, now, like: Card | None = None) -> Card:
@@ -209,7 +215,7 @@ def execute_unfreeze(db: Session, op, plan: Plan, now) -> dict:
     c = plan.data["card"]
     _set_status(c, "active")
     _note(db, c, "unfrozen")
-    return {"card_id": c.id, "status": c.status, "executed_at": clock.iso(now)}
+    return {**brief(c), "executed_at": clock.iso(now)}
 
 
 # 挂失不可撤销：不再作为 protect 直接操作，必须 prepare + 用户确认（紧急止损请先冻结）
@@ -226,7 +232,7 @@ def execute_report_loss(db: Session, op, plan: Plan, now) -> dict:
     c = plan.data["card"]
     _set_status(c, "lost")
     _note(db, c, "lost")
-    return {"card_id": c.id, "status": c.status, "executed_at": clock.iso(now)}
+    return {**brief(c), "executed_at": clock.iso(now)}
 
 
 def build_reissue_plan(db: Session, user: User, params: dict, now, lock: bool = False) -> Plan:
@@ -245,7 +251,7 @@ def execute_reissue(db: Session, op, plan: Plan, now) -> dict:
     new = _create_card(db, acc, now, like=old)
     old.replaced_by = new.id
     _note(db, new, "issued")
-    return {"card_id": new.id, "card_no_masked": mask(new.card_no), "executed_at": clock.iso(now)}
+    return {**brief(new), "executed_at": clock.iso(now)}
 
 
 def normalize_controls(db: Session, user: User, body) -> dict:

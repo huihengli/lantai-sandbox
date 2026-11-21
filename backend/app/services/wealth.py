@@ -170,5 +170,7 @@ def execute_redeem(db: Session, op, plan: Plan, now) -> dict:
                        operation_id=op.id, merchant_category="理财")
     if h.shares_c == 0:
         h.status, h.closed_at = "closed", now
-    return {"holding_id": h.id, "transaction_id": txn.id, "amount": fmt(value), "pnl": fmt(value - cost_part),
+    # shares/nav 与申购 result 对齐：赎回后 Agent 可用「赎回份额 × 成交净值」自行复核金额，无需再查持仓
+    return {"holding_id": h.id, "transaction_id": txn.id, "shares": shares_text(sell), "nav": nav_text(h.product.nav_bp),
+            "amount": fmt(value), "pnl": fmt(value - cost_part),
             "balance_after": fmt(acc.balance_cents), "executed_at": clock.iso(now)}

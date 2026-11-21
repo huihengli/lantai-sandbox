@@ -1,6 +1,6 @@
 # 澜台 Agent 接口文档
 
-> 更新日期：2026-10-15　版本：与后端 1.0.0 同步（共 43 个 Agent 通道接口），已包含安全加固后的对外行为
+> 更新日期：2026-11-21　版本：与后端 1.0.0 同步（共 43 个 Agent 通道接口），已包含安全加固后的对外行为
 > 本文由脚本从运行中的 FastAPI 应用提取接口与请求结构，并补充手写说明生成。开发环境可对照 `GET /openapi.json`；生产模式该接口默认关闭，以本文为准。本文用于指导 MCP 工具的设计。
 
 ## 目录
@@ -8,7 +8,7 @@
 - 1. 定位与硬性约束
 - 2. 接入与认证
 - 3. 统一响应与错误码
-- 4. 核心流程：prepare → 用户确认 → 查询结果（含 4.4 Agent 加强验证 `step_up`）
+- 4. 核心流程：prepare → 用户确认 → 查询结果（含 4.2.1 `result` 字段、4.2.2 `executed_at` 时间基准、4.4 Agent 加强验证 `step_up`）
 - 5. 风控结果与原因码
 - 6. 事件流
 - 7. 接口参考
@@ -142,7 +142,7 @@ Agent                         澜台后端                         用户（前�
 | `PREPARED` | 已创建，等待用户确认（仅需确认，无需 OTP） | 否 |
 | `OTP_PENDING` | 已创建，需要用户先验证短信码 | 否 |
 | `OTP_VERIFIED` | OTP 已通过，等待确认 | 否 |
-| `EXECUTED` | 已执行，`result` 含流水号/余额等 | 是 |
+| `EXECUTED` | 已执行，`result` 含流水号/持有编号等（字段见 4.2.1） | 是 |
 | `BLOCKED` | 被风控拦截（prepare 时或确认时复核） | 是 |
 | `EXPIRED` | 超过 5 分钟有效期 | 是 |
 | `CANCELLED` | 被取消或被用户拒绝 | 是 |
@@ -179,9 +179,60 @@ Agent                         澜台后端                         用户（前�
 ```
 
 - `confirm_url` 仅在操作处于非终态时出现；`BLOCKED` 没有。
-- 执行成功后再次 `get_operation`，多出 `result`（流水号、操作后余额、持有编号等，随操作类型而异）。
+- 执行成功后再次 `get_operation`，多出 `result`；各 `type` 返回哪些字段见 4.2.1，时间口径见 4.2.2。
 - 同一 `operation_id` 重复确认不会重复扣款（并发确认也只执行一次，其余请求返回首次结果）。
 - **Agent 视图已裁剪**：`summary` 与 `result` 不含 `balance_after`；用户在前端看到的视图包含余额。需要余额请调用 `get_balance`。
+
+#### 4.2.1 `result` 字段（按 `type`）
+
+`result` 只在 `status = EXECUTED` 时出现，字段是**白名单**，随 `type` 而异；未列出的字段不要读取。
+
+| `type` | `result` 字段（Agent 通道可见） |
+|---|---|
+| `transfer` | `transaction_id`、`fee`、`executed_at` |
+| `merchant_payment` | `transaction_id`、`order_ref`、`fee`、`executed_at` |
+| `deposit_create` | `holding_id`、`transaction_id`、`maturity_date`、`executed_at` |
+| `deposit_early_withdraw` | `holding_id`、`principal`、`interest`、`executed_at` |
+| `wealth_subscribe` | `holding_id`、`transaction_id`、`shares`、`nav`、`executed_at` |
+| `wealth_redeem` | `holding_id`、`transaction_id`、`shares`、`nav`、`amount`、`pnl`、`executed_at` |
+| `card_apply` / `card_reissue` / `card_unfreeze` / `card_report_loss` | `card_id`、`card_no_masked`、`status`、`status_text`、`executed_at` |
+| `card_controls` / `card_limits` | `card`（卡片快照）、`executed_at` |
+| `account_limits` | `account_id`、`limits`、`executed_at` |
+| `mandate_cancel` | `mandate_id`、`merchant`、`status`、`executed_at` |
+
+字段口径：
+
+| 字段 | 说明 |
+|---|---|
+| `transaction_id` | 本笔资金动作的流水号（`txn_` 开头），用于对账、与 `list_transactions` 交叉核对 |
+| `holding_id` | 定期/理财持仓编号（`hld_`/`whd_` 开头）；理财多次申购会并入同一持仓，故同一 id 可能出现在多次结果中 |
+| `card_id` / `card_no_masked` / `status` / `status_text` | 卡片业务 id、脱敏卡号（`****1234`）、机器状态码、中文状态文案（正常 / 已冻结 / 已锁定 / 已挂失）。**任何响应都不返回完整卡号** |
+| `card` | `card_controls` / `card_limits` 的卡片快照：`id`、`account_id`、`card_no_masked`、`type`、`status`、`status_text`、`controls`、`limits`、`replaced_by`、`created_at` |
+| `limits` | `{"single": "20000.00", "daily": "60000.00"}`，字符串两位小数 |
+| `fee` | 手续费，字符串两位小数。**`merchant_payment` 固定 `"0.00"`**（商户支付不收费）；`transfer` 的行内转账为 `"0.00"`，跨行按 `CROSS_BANK_FEE_*` 计算 |
+| `principal` / `interest` / `amount` / `pnl` | 金额字符串两位小数；`pnl` 为负表示该笔赎回实现了亏损 |
+| `shares` / `nav` | 赎回或申购的份额（两位小数字符串）与成交净值（四位小数字符串，如 `"1.2310"`）；`wealth_redeem` 的 `amount` 可用 `shares × nav` 复核 |
+| `maturity_date` | 到期日，澜台本地日期 `YYYY-MM-DD`，**不带时区偏移**（与 `executed_at` 不同，不要拼成时间戳） |
+| `order_ref` | 回显调用方提交的商户订单号 |
+| `status`（`mandate_cancel`） | 取消后的凭证状态，固定 `cancelled` |
+| `executed_at` | 执行时间，银行时钟，见 4.2.2 |
+| `balance_after` | **仅用户通道**出现；Agent 通道一律被裁掉。需要余额请调用 `get_balance` |
+
+```json
+// GET /api/v1/operations/op_8f3a2c1d9e（Agent 通道，status = EXECUTED，type = transfer）
+{ "status": "EXECUTED",
+  "result": { "transaction_id": "txn_5b1e7c6d2f", "fee": "2.00", "executed_at": "2026-10-09T14:05:07+01:00" } }
+```
+
+- `status = FAILED` 时 `result` 为 `{"error": "INSUFFICIENT_BALANCE", "message": "余额不足"}`；其余终态（`BLOCKED` / `EXPIRED` / `CANCELLED` / `OTP_LOCKED`）没有 `result`。
+- `result` 与 `summary` 同样遵守最小披露：不含 OTP、令牌、他人账号明文与内部阈值。
+
+#### 4.2.2 `executed_at` 的时间基准
+
+- 由服务端 `app.clock` 生成，是**银行时钟，不是 Agent 本机时间**。演示环境时钟可被快进或回拨（见 `GET /api/v1/clock`），因此“刚刚发生”“多久之前”一律以本接口返回的时间为准。
+- ISO8601 **带时区偏移**，且与 `GET /api/v1/clock` 的 `now` **同一时区偏移**（由部署的 `TIMEZONE_OFFSET` 决定，默认 `+01:00`），例如 `"2026-10-09T14:05:07+01:00"`。
+- `executed_at`、`created_at`、`expires_at` 与 `/api/v1/clock` 的 `now` 是同一基准，可直接相减计算耗时；不要把偏移硬编码为某个固定值，也不要用本机时间对齐。
+- 两通道的 `executed_at` 相同；4.2.1 的字段裁剪（`balance_after`）不影响任何时间字段。
 
 ### 4.3 操作类型（`type`）
 
@@ -306,7 +357,7 @@ Agent                         澜台后端                         用户（前�
 #### `GET /api/v1/clock`
 
 - **MCP 工具名**：`get_bank_time`　**类别**：查询　**所需 scope**：`read`
-- **说明**：银行侧当前时间（澜台本地时区，ISO8601 带偏移），返回 `{"now": "2026-10-09T02:30:00+08:00"}`。
+- **说明**：银行侧当前时间（澜台本地时区，ISO8601 带偏移，偏移由 `TIMEZONE_OFFSET` 决定，默认 `+01:00`），返回 `{"now": "2026-10-09T02:30:00+01:00"}`。操作结果的 `executed_at` 与本接口同一时钟、同一偏移（见 4.2.2）。
 - **注意**：演示环境下银行时钟可能被调整（快进、设到夜间等），与 Agent 本机时间不一致。判断“今天/本月”、单日限额、夜间交易、令牌与操作过期、定期到期时，以本接口时间为准，不要用本机时间。只读，Agent 无法修改时钟。
 
 #### `GET /api/v1/accounts`
@@ -420,7 +471,7 @@ Agent                         澜台后端                         用户（前�
 #### `GET /api/v1/operations/{op_id}`
 
 - **MCP 工具名**：`get_operation`　**类别**：查询　**所需 scope**：`read`
-- **说明**：查询操作的当前状态、风控结果与执行结果。
+- **说明**：查询操作的当前状态、风控结果与执行结果；`EXECUTED` 后多出 `result`，其字段随 `type` 而异（见 4.2.1）。
 - **注意**：prepare 之后用它轮询用户是否已确认；建议间隔 2~3 秒，到终态即停。**Agent 视图已裁剪**：`summary`/`result` 不含 `balance_after`；`DAILY_LIMIT_EXCEEDED`、`CARD_LIMIT_EXCEEDED`、`AUTOPAY_AT_RISK` 三条风控原因只给中性文案、`params` 为空。
 - **路径参数**：`op_id`
 

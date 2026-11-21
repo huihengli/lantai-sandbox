@@ -175,7 +175,7 @@ onBeforeUnmount(() => { clearInterval(poll); clearInterval(tick); });
             <template v-if="detail.result.order_ref"><dt>订单号</dt><dd class="mono">{{ detail.result.order_ref }}</dd></template>
             <template v-if="detail.result.holding_id"><dt>持有编号</dt><dd class="mono">{{ detail.result.holding_id }}</dd></template>
             <template v-if="detail.result.balance_after"><dt>账户余额</dt><dd class="num">¥ {{ fmtMoney(detail.result.balance_after) }}</dd></template>
-            <template v-if="detail.result.card_no_masked"><dt>新卡号</dt><dd class="mono">{{ detail.result.card_no_masked }}</dd></template>
+            <template v-if="detail.result.card_no_masked"><dt>卡号</dt><dd class="mono">{{ detail.result.card_no_masked }}</dd></template>
             <dt>执行时间</dt><dd class="num">{{ fmtTime(detail.result.executed_at, true) }}</dd>
           </dl>
         </div>
